@@ -1,0 +1,10 @@
+name: execution_context
+version: 0.1.0
+
+authors:
+  - Julien Portalier <julien@portalier.com>
+
+description: |
+  Implementation of RFC 0002 - MT Execution Contexts
+
+license: Apache-2.0
