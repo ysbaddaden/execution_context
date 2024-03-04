@@ -1,10 +1,16 @@
-def spawn(*, name : String?, execution_context : ExecutionContext = ExecutionContext.current, &) : Fiber
-  execution_context.spawn(name: name) { yield }
+def spawn(*,
+    name : String? = nil,
+    execution_context : ExecutionContext = ExecutionContext.current,
+    &block) : Fiber
+  execution_context.spawn(name: name, &block)
 end
 
-@[Deprecated("spawn(same_thread) is deprecated, use ExecutionContext::SingleThreaded instead")]
-def spawn(*, name : String?, same_thread : Bool, &) : Fiber
-  ExecutionContext.current.spawn(name: name, same_thread: same_thread) { yield }
+@[Deprecated("The same_thread argument to spawn is deprecated")]
+def spawn(*,
+    name : String? = nil,
+    same_thread : Bool,
+    &block) : Fiber
+  ExecutionCcontext.spawn(name: name, same_thread: same_thread, &block)
 end
 
 def sleep : Nil

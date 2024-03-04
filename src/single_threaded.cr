@@ -57,11 +57,11 @@ abstract class ExecutionContext
       end
     end
 
-    # def spawn(name : String? = nil, same_thread : Bool = false, &block : ->) : Fiber
-    #   # whatever the value for same thread: fibers only run on one thread in the
-    #   # ST context
-    #   super(name, &block)
-    # end
+    def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
+      # whatever the value for same thread, fibers will always run on the same
+      # thread anyway
+      super(name, &block)
+    end
 
     def enqueue(fiber : Fiber) : Nil
       @lock.lock
@@ -179,28 +179,17 @@ abstract class ExecutionContext
       end
     end
 
-    # buffer inspect/to_s to try and have a single write to IO
-
-    def inspect : String
-      to_s
+    @[AlwaysInline]
+    def inspect(io : IO) : Nil
+      to_s(io)
     end
 
-    def inspect(io : IO)
-      io << to_s
-    end
-
-    def to_s(io : IO)
-      io << to_s
-    end
-
-    def to_s : String
-      String.build do |io|
-        io << "#<" << self.class.name << ":0x"
-        object_id.to_s(io, 16)
-        io << ' ' << name << " thread=0x"
-        thread.@system_handle.to_s(io, 16)
-        io << '>'
-      end
+    def to_s(io : IO) : Nil
+      io << "#<" << self.class.name << ":0x"
+      object_id.to_s(io, 16)
+      io << ' ' << name << " thread=0x"
+      thread.@system_handle.to_s(io, 16)
+      io << '>'
     end
   end
 end

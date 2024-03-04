@@ -1,5 +1,6 @@
 require "./core_ext/*"
 require "./single_threaded"
+require "./isolated"
 
 # {% if flag?(:preview_mt) %}
 #   require "./multi_threaded"
@@ -64,13 +65,17 @@ abstract class ExecutionContext
   # `ArgumentError` exception.
   #
   # May be called from any ExecutionContext (i.e. must be thread-safe).
-  def spawn(name : String? = nil, same_thread : Bool = false, &block : ->) : Fiber
+  def spawn(*, name : String? = nil, &block : ->) : Fiber
     fiber = Fiber.new(name: name, execution_context: self, &block)
     enqueue(fiber)
     fiber
   end
 
-  abstract def stack_pool : Crystal::StackPool
+  # Legacy support for the `same_thread` argument, or not, depending on the
+  # context.
+  abstract def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
+
+  abstract def stack_pool : Fiber::StackPool
 
   # TODO: the event loop should eventually be handled by each ExecutionContext;
   #       might share an intance per context, have one per thread, ...

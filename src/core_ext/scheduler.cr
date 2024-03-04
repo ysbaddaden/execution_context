@@ -1,4 +1,6 @@
-# Disables everything from the regular schedulers.
+# Disables everything from the current Crystal scheduler. Delegates everything
+# that can be to `ExecutionContext.current`. Aborts when a Crystal::Scheduler is
+# instantiated.
 #
 # TODO: deprecate all methods (so we get deprecation warnings)
 
@@ -58,5 +60,16 @@ class Crystal::Scheduler
   @[AlwaysInline]
   def self.init : Nil
     ExecutionContext.init_default_context
+  end
+
+  def initialize
+    message = String.build do |str|
+      str.puts "BUG: instantiated a Crystal::Scheduler"
+      caller.each { |line| str.puts line }
+    end
+    abort message
+
+    # not reachable but required for compilation
+    previous_def
   end
 end
