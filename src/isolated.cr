@@ -15,7 +15,7 @@ abstract class ExecutionContext
 
     # :nodoc:
     def spawn(name : String?, same_thread : Bool, &block : ->) : Fiber
-      raise RuntimeError.new("ExecutionContext::Isolated doesn't support same_thread:true attribute") if same_thread
+      raise ArgumentError.new("#{self.class.name}#spawn doesn't support same_thread:true") if same_thread
       self.spawn(name, &block)
     end
 

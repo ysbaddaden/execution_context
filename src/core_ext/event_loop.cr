@@ -1,9 +1,15 @@
 abstract class Crystal::EventLoop
-  # Runs the loop, triggering activable events, then returns. Set `blocking` to
-  # false to return immediately if there are no activable events, otherwise set
-  # it to true to wait for activable events (blocking the current thread).
+  # Runs the loop, triggering activable events, then returns.
+  #
+  # Set `blocking` to false to return immediately if there are no activable
+  # events. Set it to true to wait for activable events (blocking the current
+  # thread).
   #
   # Returns true if any event has been triggered; returns false otherwise.
+  #
+  # FIXME: what to do when the event loop has no registered event to wait for?
+  #        in that situation libevent2 returns a specific value (1) that breaks
+  #        the loop.
   #
   # OPTIMIZE: the loop should return a fiber for the current execution context
   #           directly to skip the queue —not possible with libevent2 or maybe

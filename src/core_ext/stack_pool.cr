@@ -5,19 +5,8 @@ class Fiber::StackPool
 
   # Collects `count` stacks from the top of the pool.
   def collect(count = lazy_size // 2) : Nil
-    return if count == 0
-
-    buffer = Array(Void*).new(count)
-
-    @lock.sync do
-      Deque.half_slices(@deque) do |slice|
-        buffer.concat slice[0...{count, slice.size}.min]
-        count -= buffer.size
-        break if count <= 0
-      end
-    end
-
-    buffer.each do |stack|
+    count.times do
+      break unless stack = @lock.sync { @deque.shift? }
       Crystal::System::Fiber.free_stack(stack, STACK_SIZE)
     end
   end

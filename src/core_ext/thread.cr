@@ -5,26 +5,35 @@ class Thread
   # :nodoc:
   property! current_fiber : Fiber
 
-  # @func : Thread ->
-
-  # protected def start
-  #   Thread.threads.push(self)
-  #   Thread.current = self
-  #   @main_fiber = fiber = Fiber.new(stack_address, self)
-
-  #   begin
-  #     @func.call(self)
-  #   rescue ex
-  #     @exception = ex
-  #   ensure
-  #     Thread.threads.delete(self)
-  #     Fiber.inactive(fiber)
-  #     detach { system_close }
-  #   end
-  # end
-
   def execution_context=(@execution_context : ExecutionContext)
     main_fiber.execution_context = execution_context
+  end
+
+  # the following methods set `@current_fiber` and are otherwise identical to crystal:master
+
+  def initialize
+    @func = ->(t : Thread) {}
+    @system_handle = Crystal::System::Thread.current_handle
+    @current_fiber = @main_fiber = Fiber.new(stack_address, self)
+
+    Thread.threads.push(self)
+  end
+
+  protected def start
+    Thread.threads.push(self)
+    Thread.current = self
+    @main_fiber = fiber = Fiber.new(stack_address, self)
+    @current_fiber = fiber
+
+    begin
+      @func.call(self)
+    rescue ex
+      @exception = ex
+    ensure
+      Thread.threads.delete(self)
+      Fiber.inactive(fiber)
+      detach { system_close }
+    end
   end
 end
 

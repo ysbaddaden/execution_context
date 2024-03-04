@@ -1,7 +1,7 @@
 abstract class ExecutionContext
   class SingleThreaded < ExecutionContext
-    @thread = uninitialized Thread
-    @main_fiber = uninitialized Fiber
+    private getter! thread : Thread
+    private getter! main_fiber : Fiber
     @deep_sleep_fiber : Fiber?
 
     getter name : String?
@@ -31,32 +31,37 @@ abstract class ExecutionContext
         start_thread { wg.done }
         wg.wait
       end
+
+      # TODO: enqueue stack pool collector fiber
     end
 
+    # Setups the scheduler inside the current thread.
+    # Spawns a fiber to run the scheduler loop.
     private def hijack_current_thread : Nil
-      @thread = Thread.current
-      @thread.execution_context = self
-      @thread.current_fiber = @thread.main_fiber
+      @thread = thread = Thread.current
+      thread.execution_context = self
+      thread.current_fiber = thread.main_fiber
       @main_fiber = self.spawn(name: "#{@name}-main") { run_loop }
     end
 
+    # Starts a thread to run the scheduler.
+    # The thread's main fiber will run the scheduler loop.
     private def start_thread(&block : ->) : Nil
-      Thread.new do
-        @thread = Thread.current
-        @thread.execution_context = self
-        @main_fiber = @thread.current_fiber = @thread.main_fiber
+      Thread.new do |thread|
+        @thread = thread
+        thread.execution_context = self
+        @main_fiber = thread.current_fiber = thread.main_fiber
         # @main_fiber.name = "#{@name}-main"
         block.call
         run_loop
       end
     end
 
-    # :nodoc:
-    def spawn(name : String?, same_thread : Bool, &block : ->) : Fiber
-      # whatever the value for same thread: fibers only run on one thread in the
-      # ST context
-      self.spawn(name, &block)
-    end
+    # def spawn(name : String? = nil, same_thread : Bool = false, &block : ->) : Fiber
+    #   # whatever the value for same thread: fibers only run on one thread in the
+    #   # ST context
+    #   super(name, &block)
+    # end
 
     def enqueue(fiber : Fiber) : Nil
       @lock.lock
@@ -75,21 +80,21 @@ abstract class ExecutionContext
 
     protected def reschedule : Nil
       if fiber = dequeue?
-        resume fiber unless fiber == @thread.current_fiber
+        resume fiber unless fiber == thread.current_fiber
       else
-        # nothing to do: switch to the main loop
-        resume @main_fiber
+        # nothing to do: switch back to the main loop
+        resume main_fiber
       end
     end
 
+    # Dequeues one fiber from the runnable queue.
+    # Fallbacks to run the event queue (nonblocking).
     protected def dequeue? : Fiber?
       loop do
-        # dequeue from the local queue
         if fiber = @lock.sync { @runnables.shift? }
           return fiber
         end
 
-        # check the event loop
         if @event_loop.run(blocking: true)
           # event loop may have enqueued a new fiber (or not)
           if fiber = @lock.sync { @runnables.shift? }
@@ -102,7 +107,7 @@ abstract class ExecutionContext
       end
     end
 
-    private def validate_resumable(fiber)
+    private def validate_resumable(fiber : Fiber) : Nil
       return if fiber.resumable?
 
       message = String.build do |str|
@@ -137,23 +142,25 @@ abstract class ExecutionContext
         end
 
         # we can't check the event loop again (nonblocking) while we hold the
-        # lock (it would deadlock)
+        # lock (it would deadlock when calling #enqueue)
 
-        # nothing to do, let's declare the idle state
+        # no runnable fiber, set idle state
         @idle = true
         @lock.unlock
 
-        # block on the event loop, waiting for an event to trigger
+        # block on the event loop, waiting for pending event(s) to activate.
         if @event_loop.run(blocking: true)
+          # while idling the next runnable is sent to the fiber channel
           resume @fiber_channel.receive
           next
         end
 
-        # deep sleep: nothing to do, nothing to wait for in the event loop, we
-        # switch to a fiber that waits on the fiber channel; we need the extra
-        # fiber to crate a wait event to the event loop, and let the thread
-        # switch back to the main loop, but this time there's an event in the
-        # event loop to wait on!
+        # no runnable fiber, no pending event in the event loop: go into deep
+        # sleep until another context enqueues a fiber.
+        #
+        # switch to a dedicated fiber that waits on the fiber channel; we need
+        # the extra fiber to create a wait event in the event loop, leading the
+        # thread to resume the main loop, eventually waiting on the even loop.
         resume deep_sleep_fiber
       rescue exception
         message = String.build do |str|
@@ -166,14 +173,34 @@ abstract class ExecutionContext
 
     private def deep_sleep_fiber : Fiber
       @deep_sleep_fiber ||= Fiber.new(name: "#{@name}-sleep", execution_context: self) do
-        loop { resume @fiber_channel.receive }
+        loop do
+          resume @fiber_channel.receive
+        end
       end
     end
 
-    def inspect(io : IO) : Nil
-      io << "#<ExecutionContext::SingleThreaded:0x"
-      object_id.to_s(io, 16)
-      io << ':' << @name << '>'
+    # buffer inspect/to_s to try and have a single write to IO
+
+    def inspect : String
+      to_s
+    end
+
+    def inspect(io : IO)
+      io << to_s
+    end
+
+    def to_s(io : IO)
+      io << to_s
+    end
+
+    def to_s : String
+      String.build do |io|
+        io << "#<" << self.class.name << ":0x"
+        object_id.to_s(io, 16)
+        io << ' ' << name << " thread=0x"
+        thread.@system_handle.to_s(io, 16)
+        io << '>'
+      end
     end
   end
 end

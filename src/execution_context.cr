@@ -1,23 +1,23 @@
 require "./core_ext/*"
 require "./single_threaded"
 
-{% if flag?(:preview_mt) %}
-  require "./multi_threaded"
-{% end %}
+# {% if flag?(:preview_mt) %}
+#   require "./multi_threaded"
+# {% end %}
 
 abstract class ExecutionContext
-  @@default = uninitialized ExecutionContext
+  @@default : ExecutionContext?
 
   def self.default : ExecutionContext
-    @@default
+    @@default.not_nil!("expected default execution context to have been setup")
   end
 
   def self.init_default_context : Nil
-    {% if flag?(:preview_mt) %}
-      @@default = MultiThreaded.default(default_workers_count)
-    {% else %}
-      @@default = SingleThreaded.default
-    {% end %}
+    # {% if flag?(:preview_mt) %}
+    #   @@default = MultiThreaded.default(default_workers_count)
+    # {% else %}
+       @@default = SingleThreaded.default
+    # {% end %}
   end
 
   def self.default_workers_count : Int32
@@ -59,23 +59,22 @@ abstract class ExecutionContext
   # Creates a new fiber then calls `#enqueue` to add it to the execution
   # context.
   #
+  # The `same_thread` parameter is legacy. `ExecutionContext::SingleThreaded`
+  # will accept it while `ExecutionContext::MultiThreaded` will raise a
+  # `ArgumentError` exception.
+  #
   # May be called from any ExecutionContext (i.e. must be thread-safe).
-  def spawn(name : String?, &block : ->) : Fiber
+  def spawn(name : String? = nil, same_thread : Bool = false, &block : ->) : Fiber
     fiber = Fiber.new(name: name, execution_context: self, &block)
     enqueue(fiber)
     fiber
   end
 
+  abstract def stack_pool : Crystal::StackPool
+
   # TODO: the event loop should eventually be handled by each ExecutionContext;
   #       might share an intance per context, have one per thread, ...
   abstract def event_loop : Crystal::EventLoop
-
-  # Same as `#spawn` but with support for the legacy `same_thread` parameter. A
-  # single-threaded context may accept `same_thread: true` while a
-  # multi-threaded one should raise an exception.
-  #
-  # May be called from any ExecutionContext (i.e. must be thread-safe).
-  abstract def spawn(name : String?, same_thread : Bool, &block) : Fiber
 
   # Enqueues a fiber to be resumed inside the execution context.
   #
@@ -101,8 +100,11 @@ abstract class ExecutionContext
     validate_resumable(fiber)
 
     GC.lock_read
-    current_fiber, @thread.current_fiber = @thread.current_fiber, fiber
+    current_fiber, thread.current_fiber = thread.current_fiber, fiber
     Fiber.swapcontext(pointerof(current_fiber.@context), pointerof(fiber.@context))
     GC.unlock_read
   end
+
+  # Validates that the current fiber can be resumed, and aborts otherwise.
+  protected abstract def validate_resumable(fiber : Fiber) : Nil
 end
