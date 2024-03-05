@@ -14,35 +14,71 @@ abstract class ExecutionContext
       @lock = Crystal::SpinLock.new
     end
 
-    # Put a runnable fiber on the global runnable queue.
-    #
-    # Lock must be held!
+    # Grabs the lock and enqueues a runnable fiber on the global runnable queue.
     def push(fiber : Fiber) : Nil
+      lock { unsafe_push(fiber) }
+    end
+
+    # Enqueues a runnable fiber on the global runnable queue. Assumes the lock
+    # is currently held.
+    def unsafe_push(fiber : Fiber) : Nil
       @queue.push(fiber)
       @size += 1
     end
 
-    # Put a batch of runnable fibers on the global runnable queue.
-    # `n` is the number of fibers in `queue`.
-    #
-    # Lock must be held!
-    def push(queue : Queue*, n : Int32) : Nil
-      @queue.push_back_all(queue)
-      @size += n
+    # Grabs the lock and puts a runnable fibers on the global runnable queue.
+    # `size` is the number of fibers in `queue`.
+    def push(queue : Queue*, size : Int32) : Nil
+      lock { unsafe_push(queue, size) }
     end
 
-    # Try to grab a batch of fibers from the global runnable queue. Returns the
-    # next runnable fiber or `nil` if the queue was empty.
+    # Puts a runnable fibers on the global runnable queue. Assumes the lock is
+    # currently held. `size` is the number of fibers in `queue`.
+    def unsafe_push(queue : Queue*, size : Int32) : Nil
+      @queue.bulk_unshift(queue)
+      @size += size
+    end
+
+    # Grabs the lock and dequeues one runnable fiber from the global runnable
+    # queue.
+    def get? : Fiber?
+      lock { unsafe_get? }
+    end
+
+    # Dequeues one runnable fiber from the global runnable queue. Assumes the
+    # lock is currently held.
+    def unsafe_get? : Fiber?
+      if fiber = @queue.pop?
+        @size -= 1
+        fiber
+      end
+    end
+
+    # Grabs the lock then tries to grab a batch of fibers from the global
+    # runnable queue. Returns the next runnable fiber or `nil` if the queue was
+    # empty.
     #
     # `divisor` is meant for fair distribution of fibers across threads in the
     # execution context; it should be the number of threads.
+    def grab?(runnables : Runnables, divisor : Int32) : Fiber?
+      lock { unsafe_grab?(runnables, divisor) }
+    end
+
+    # Try to grab a batch of fibers from the global runnable queue. Returns the
+    # next runnable fiber or `nil` if the queue was empty. Assumes the lock is
+    # currently held.
     #
-    # Lock must be held!
-    def get(runnables : Runnables, divisor : Int32) : Fiber?
+    # `divisor` is meant for fair distribution of fibers across threads in the
+    # execution context; it should be the number of threads.
+    def unsafe_grab?(runnables : Runnables, divisor : Int32) : Fiber?
       return if @size == 0
 
       # always grab at least 1 fiber
-      n = {@size // divisor + 1, @size, runnables.capacity // 2}.min
+      n = {
+        @size // divisor + 1,
+        @size,
+        runnables.capacity // 2
+      }.min
       @size -= n
       fiber = @queue.pop?
 

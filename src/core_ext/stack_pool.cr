@@ -1,6 +1,4 @@
 class Fiber::StackPool
-  class_getter global : self = new
-
   @lock = Crystal::SpinLock.new
 
   # Collects `count` stacks from the top of the pool.

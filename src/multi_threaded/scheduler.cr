@@ -11,56 +11,64 @@ abstract class ExecutionContext
     #
     # TODO: cooperative shutdown (e.g. when shrinking number of schedulers)
     class Scheduler < ExecutionContext
-      property execution_context : MultiThreaded
+      protected property execution_context : MultiThreaded
+      protected property! thread : Thread
+      protected property! main_fiber : Fiber
 
-      @thread = uninitialized Thread
-      property thread : Thread
+      @runnables : Runnables(256)
 
-      @main_fiber = uninitialized Fiber
-      property main_fiber : Fiber
+      # TODO: should eventually have one EL per EC
+      getter event_loop : Crystal::EventLoop = Crystal::EventLoop.create
 
-      property idle? : Bool = false
+      property? idle : Bool = false
+      @tick : Int32 = 0
+      @name : String
 
-      def initialize(@execution_context)
+      protected def initialize(@execution_context, @name)
         @runnables = Runnables(256).new(@execution_context.global_queue)
-        @tick = 0
-      end
-
-      # Unlike `ExecutionContext::MultiThreaded#enqueue` this method is only
-      # safe to call on `ExecutionContext.current`!
-      def enqueue(fiber : Fiber) : Nil
-        @runnables.push(fiber)
-      end
-
-      def spawn(name : String?, &block : ->) : Fiber
-        fiber = Fiber.new(name: name, execution_context: @execution_context, &block)
-        enqueue fiber
-        fiber
       end
 
       # :nodoc:
-      def spawn(name : String?, same_thread : Bool, &block : ->) : Fiber
-        raise RuntimeError.new("ExecutionContext::MultiThreaded doesn't support same_thread:true attribute") if same_thread
-        self.spawn(name, &block)
+      def stack_pool : Fiber::StackPool
+        @execution_context.stack_pool
+      end
+
+      # Unlike `ExecutionContext::MultiThreaded#enqueue` this method is only
+      # safe to call on `ExecutionContext.current` which should always be the
+      # case, since cross context enqueues will call EC::MT#enqueue).
+      def enqueue(fiber : Fiber) : Nil
+        # LibC.dprintf 2, "thread=0x#{LibC.pthread_self.to_s(16)} mt.scheduler#enqueue fiber=0x#{fiber.object_id.to_s(16)}\n"
+
+        @runnables.push(fiber)
+        @execution_context.unpark_idle_thread
+      end
+
+      def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
+        raise RuntimeError.new("#{self.class.name}#spawn doesn't support same_thread:true") if same_thread
+        self.spawn(name: name, &block)
       end
 
       protected def reschedule : Nil
+        # LibC.dprintf 2, "thread=0x#{LibC.pthread_self.to_s(16)} mt.scheduler#reschedule fiber=0x#{Fiber.current.object_id.to_s(16)}\n"
+
         if fiber = dequeue?
-          resume fiber
+          resume fiber unless fiber == thread.current_fiber
         else
-          resume @main_fiber
+          # nothing to do: switch back to the main loop
+          resume main_fiber
         end
       end
+
+      # protected def resume(fiber : Fiber) : Nil
+      #   LibC.dprintf 2, "thread=0x#{LibC.pthread_self.to_s(16)} mt.scheduler#resume fiber=0x#{fiber.object_id.to_s(16)}\n"
+      #   super
+      # end
 
       # In a multithreaded environment the fiber may be dequeued before its
       # running context has been saved on the stack; we must wait until the
       # context switch assembly saved all registers on the stack and set the
       # fiber as resumable.
-      #
-      # FIXME: if the thread saving the fiber context has been preempted, this
-      #        also blocks the current thread from progressing... shall we abort
-      #        and reenqueue the fiber after some spins?
-      private def validate_resumable(fiber)
+      private def validate_resumable(fiber : Fiber) : Nil
         until fiber.resumable?
           if fiber.dead?
             message = String.build do |str|
@@ -74,56 +82,38 @@ abstract class ExecutionContext
             exit 1
           end
 
+          # FIXME: if the thread saving the fiber context has been preempted,
+          #        this will block the current thread from progressing...
+          #        shall we abort and reenqueue the fiber after MAX iterations?
           Intrinsics.pause
         end
       end
 
       @[AlwaysInline]
-      protected def steal_from(scheduler : Scheduler) : Fiber?
-        @runnables.steal_from(scheduler.@runnables)
-      end
-
-      protected def run_loop : Nil
-        loop do
-          # first try to dequeue from local/global queues and run the event-loop
-          # (nonblocking)
-          if fiber = dequeue?
-            resume(fiber)
-          end
-
-          # nothing to do: consider parking the thread, which will check the
-          # queues again, run the event loop (blocking) and may eventually park
-          # the thread if there's really nothing left to do
-          if fiber = try_park_thread?
-            resume(fiber)
-          end
-        end
-      end
-
-      @[AlwaysInline]
       private def dequeue? : Fiber?
-        # every once in a while: dequeue from global queue; avoids two fibers
-        # constantly respawing each other to completely occupy the queue
+        # every once in a while: dequeue from global queue to avoid two fibers
+        # constantly respawing each other to completely occupy the local queue
+        #
+        # FIXME: dequeue one or grab a batch of fibers (?)
         if (@tick &+= 1) % 61 == 0
           if fiber = global_dequeue?
             return fiber
           end
         end
 
-        # dequeue from local queue
-        if fiber = local_dequeue?
+        # grab from local queue
+        if fiber = @runnables.get?
           return fiber
         end
 
         # dequeue from global queue
-        if fiber = @execution_context.global_dequeue?
+        if fiber = global_dequeue?
           return fiber
         end
 
-        # poll the event-loop unless another thread is already running it
-        if Crystal::EventLoop.try_lock? { Crystal::EventLoop.run(blocking: false) }
-          # eloop may have queued fibers, or not, or in another context
-          if fiber = local_dequeue?
+        # poll the event loop
+        if @event_loop.run(blocking: false)
+          if fiber = @runnables.get?
             return fiber
           end
         end
@@ -134,56 +124,68 @@ abstract class ExecutionContext
         end
       end
 
-      def local_dequeue? : Fiber?
-        @runnables.get?
+      @[AlwaysInline]
+      private def global_dequeue? : Fiber?
+        @execution_context
+          .global_queue
+          .grab?(@runnables, @execution_context.size)
+      end
+
+      protected def run_loop : Nil
+        loop do
+          # dequeue from local/global queues, poll the event-loop, steal, ...
+          if fiber = @runnables.get?
+            resume fiber
+            next
+          end
+
+          if fiber = global_dequeue?
+            resume fiber
+            next
+          end
+
+          @idle = true
+
+          # block on the event loop, waiting for pending event(s) to activate
+          if @event_loop.run(blocking: true)
+            if fiber = @runnables.get?
+              @idle = false
+              resume fiber
+              next
+            end
+          end
+
+          # no runnable fiber, no pending event in the local event loop: go into
+          # deep sleep until another scheduler or another context enqueues a
+          # fiber
+          @execution_context.park_thread
+
+          @idle = false
+        rescue exception
+          message = String.build do |str|
+            str << "BUG: " << self.class.name << "#run_loop crashed with " << exception.class.name << '\n'
+            exception.backtrace.each { |line| str << "  from " << line << '\n' }
+          end
+          Crystal::System.print_error(message)
+        end
       end
 
       @[AlwaysInline]
-      private def try_park_thread? : Fiber?
-        # @execution_context.synchronize do
-        #   # check again the local queue after we locked the mutex (avoid races)
-        #   if fiber = local_dequeue?
-        #     return fiber
-        #   end
+      protected def steal_from(scheduler : Scheduler) : Fiber?
+        @runnables.steal_from(scheduler.@runnables)
+      end
 
-        #   # same for the global queue
-        #   if fiber = global_dequeue?
-        #     return fiber
-        #   end
+      @[AlwaysInline]
+      def inspect(io : IO) : Nil
+        to_s(io)
+      end
 
-        #   ## try to lock the event loop, blocking the current thread:
-        #   ##
-        #   ## OPTIMIZE: consider checking whether it was locked blocking or
-        #   ## nonblocking; if nonblocking we might want to try again before
-        #   ## parking the thread
-        #   #unless @event_loop.try_lock?
-        #   #  # really nothing to do: let's sleep
-        #   #  @idle = true
-        #   #  @execution_context.park
-        #   #  @idle = false
-
-        #   #  # on wakeup: resume normal operation
-        #   #  return
-        #   #end
-        # end
-
-        # if we reached this point, we locked the event loop, let's run it and
-        # block waiting for events to be triggerable:
-        # begin
-        #   if @event_loop.run(blocking: true)
-        #     # eloop may have queued fibers, locally or globally, or in another
-        #     # scheduler, or not or in another scheduler: resume normal operation
-        #     return
-        #   end
-        # ensure
-        #   Crystal::EvenLoop.unlock
-        # end
-
-      #rescue exception
-      #  FIXME: a worker thread crashed (this is the thread's main fiber, not any fiber)
-      #         => call a configurable handler?
-      #         => print the error and continue?
-      #         => panic & abort the process?
+      def to_s(io : IO) : Nil
+        io << "#<" << self.class.name << ":0x"
+        object_id.to_s(io, 16)
+        io << ' ' << @name << " thread=0x"
+        thread.@system_handle.to_s(io, 16)
+        io << '>'
       end
     end
   end

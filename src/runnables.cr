@@ -2,6 +2,8 @@ require "./global_queue"
 
 abstract class ExecutionContext
   # Local queue or runnable fibers for schedulers.
+  # First-in, first-out semantics (FIFO).
+  # Single producer, multiple consumers thread safety.
   #
   # Private to an execution context scheduler, except for stealing methods that
   # can be called from any thread in the execution context.
@@ -9,20 +11,13 @@ abstract class ExecutionContext
     def initialize(@global_queue : GlobalQueue)
       @head = Atomic(UInt32).new(0)
       @tail = Atomic(UInt32).new(0)
-      @buffer = uninitialized StaticArray(Fiber, N)
+      @buffer = uninitialized Fiber[N]
     end
 
     @[AlwaysInline]
     def capacity : Int32
       N
     end
-
-    # @[AlwaysInline]
-    # def empty? : Bool
-    #   head = @head.get(:relaxed)
-    #   tail = @tail.get(:relaxed)
-    #   tail &- head == 0
-    # end
 
     # Tries to push fiber on the local runnable queue. If the run queue is full,
     # pushes fiber on the global queue.
@@ -31,7 +26,7 @@ abstract class ExecutionContext
     def push(fiber : Fiber) : Nil
       loop do
         head = @head.get(:acquire) # sync with consumers
-        tail = @tail.get(:relaxed)
+        tail = @tail.get(:acquire)
 
         if (tail &- head) < N
           # put fiber to local queue
@@ -48,7 +43,8 @@ abstract class ExecutionContext
       end
     end
 
-    # Push fiber, along with a batch of fibers from local queue, on global queue.
+    # Pushes `fiber`, along with a batch of fibers from local queue to the
+    # global queue.
     #
     # Executed only by the owner.
     private def push_slow(fiber : Fiber, head : UInt32, tail : UInt32) : Bool
@@ -73,16 +69,14 @@ abstract class ExecutionContext
       queue = Queue.new(batch.to_unsafe[0], batch.to_unsafe[n])
 
       # now put the batch on global queue
-      @global_queue.lock do
-        @global_queue.push(pointerof(queue), n &+ 1)
-      end
+      @global_queue.push(pointerof(queue), (n &+ 1).to_i32)
 
       true
     end
 
-    # Tries to put all the fibers on queue on the local queue. If the queue is
-    # full, they are put on the global queue; in that case this will temporarily
-    # acquire the global queue lock.
+    # Tries to enqueue all the fibers in `queue` into the local queue. If the
+    # queue is full, they are put on the global queue; in that case this will
+    # temporarily acquire the global queue lock.
     #
     # Executed only by the owner.
     def push(queue : Queue*, size : Int32) : Nil
@@ -100,14 +94,10 @@ abstract class ExecutionContext
       @tail.set(tail, :release)
 
       # put any overflow on global queue
-      if size > 0
-        @global_queue.lock do
-          @global_queue.push(queue, size)
-        end
-      end
+      @global_queue.push(queue, size) if size > 0
     end
 
-    # Get fiber from local runnable queue.
+    # Dequeues one fiber from the local runnable queue.
     #
     # Executed only by the owner.
     def get? : Fiber?
@@ -123,13 +113,14 @@ abstract class ExecutionContext
       end
     end
 
-    # Steal half of elements from local queue of src and put onto local queue.
-    # Returns one of the stolen elements (or `nil` if failed).
+    # Steals half the fibers from the local queue of `src` and puts them onto
+    # the local queue. Returns one of the stolen fibers, or `nil` on failure.
     #
-    # Can be executed by any scheduler.
+    # ~~Can be executed by any scheduler~~ Only executed from the owner when the
+    # local queue is empty.
     def steal_from(src : Runnables) : Fiber?
-      tail = @tail.get(:relaxed)
-      n = src.grab(@buffer, tail)
+      tail = @tail.get(:acquire)
+      n = src.grab(@buffer.to_unsafe, tail)
       return if n == 0
 
       n &-= 1
@@ -145,27 +136,36 @@ abstract class ExecutionContext
       fiber
     end
 
-    # Grabs a batch of fibers from local queue into dest local queue. Returns
-    # number of grabbed fibers.
+    # Grabs a batch of fibers from local queue into `buffer` (normally the ring
+    # buffer of another `Runnables`) starting at `buffer_head`. Returns number
+    # of grabbed fibers.
     #
     # Can be executed by any scheduler.
-    protected def grab(buffer : StaticArray(Fiber, N), buffer_head : UInt32) : Int32
+    protected def grab(buffer : Fiber*, buffer_head : UInt32) : UInt32
       head = @head.get(:acquire) # sync with other consumers
 
       loop do
         tail = @tail.get(:acquire) # sync with the producer
         n = (tail &- head) // 2
 
-        return 0 if n == 0 # queue is empty
+        return 0_u32 if n == 0 # queue is empty
         next if n > N // 2 # read inconsistent head and tail
 
         n.times do |i|
           fiber = @buffer.to_unsafe[(head &+ i) % N]
-          buffer.to_unsafe[(buffer_head &+ i) % N] = fiber
+          buffer[(buffer_head &+ i) % N] = fiber
         end
+
         head, success = @head.compare_and_set(head, head &+ n, :acquire_release, :acquire)
         return n if success
       end
     end
+
+    # @[AlwaysInline]
+    # def empty? : Bool
+    #   head = @head.get(:relaxed)
+    #   tail = @tail.get(:relaxed)
+    #   tail &- head == 0
+    # end
   end
 end
