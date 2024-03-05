@@ -1,10 +1,9 @@
 require "./core_ext/*"
 require "./single_threaded"
 require "./isolated"
+# require "./multi_threaded"
 
-# {% if flag?(:preview_mt) %}
-#   require "./multi_threaded"
-# {% end %}
+{% raise "ERROR: execution contexts require the `preview_mt` compilation flag" unless flag?(:preview_mt) %}
 
 abstract class ExecutionContext
   @@default : ExecutionContext?
@@ -14,7 +13,7 @@ abstract class ExecutionContext
   end
 
   def self.init_default_context : Nil
-    # {% if flag?(:preview_mt) %}
+    # {% if flag?(:mt) %}
     #   @@default = MultiThreaded.default(default_workers_count)
     # {% else %}
        @@default = SingleThreaded.default
