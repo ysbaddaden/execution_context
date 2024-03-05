@@ -41,13 +41,13 @@ abstract class ExecutionContext
 
     # Grabs the lock and dequeues one runnable fiber from the global runnable
     # queue.
-    def get? : Fiber?
-      lock { unsafe_get? }
+    def pop? : Fiber?
+      lock { unsafe_pop? }
     end
 
     # Dequeues one runnable fiber from the global runnable queue. Assumes the
     # lock is currently held.
-    def unsafe_get? : Fiber?
+    def unsafe_pop? : Fiber?
       if fiber = @queue.pop?
         @size -= 1
         fiber
@@ -60,7 +60,7 @@ abstract class ExecutionContext
     #
     # `divisor` is meant for fair distribution of fibers across threads in the
     # execution context; it should be the number of threads.
-    def grab?(runnables : Runnables, divisor : Int32) : Fiber?
+    def grab?(runnables, divisor : Int32) : Fiber?
       lock { unsafe_grab?(runnables, divisor) }
     end
 
@@ -70,15 +70,15 @@ abstract class ExecutionContext
     #
     # `divisor` is meant for fair distribution of fibers across threads in the
     # execution context; it should be the number of threads.
-    def unsafe_grab?(runnables : Runnables, divisor : Int32) : Fiber?
+    def unsafe_grab?(runnables, divisor : Int32) : Fiber?
       return if @size == 0
 
-      # always grab at least 1 fiber
       n = {
-        @size // divisor + 1,
-        @size,
-        runnables.capacity // 2
+        @size,                  # can't grab more than available
+        @size // divisor + 1,   # divide + try to take at least 1 fiber
+        runnables.capacity // 2 # refill half the destination queue
       }.min
+
       @size -= n
       fiber = @queue.pop?
 
@@ -94,6 +94,11 @@ abstract class ExecutionContext
     @[AlwaysInline]
     def empty? : Bool
       @size == 0
+    end
+
+    @[AlwaysInline]
+    def size : Int32
+      @size
     end
 
     @[AlwaysInline]
