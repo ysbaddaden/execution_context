@@ -40,7 +40,6 @@ abstract class ExecutionContext
     private def hijack_current_thread : Nil
       @thread = thread = Thread.current
       thread.execution_context = self
-      thread.current_fiber = thread.main_fiber
       @main_fiber = self.spawn(name: "#{@name}-main") { run_loop }
     end
 
@@ -50,7 +49,7 @@ abstract class ExecutionContext
       Thread.new do |thread|
         @thread = thread
         thread.execution_context = self
-        @main_fiber = thread.current_fiber = thread.main_fiber
+        @main_fiber = thread.main_fiber
         # @main_fiber.name = "#{@name}-main"
         block.call
         run_loop
