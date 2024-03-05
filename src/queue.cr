@@ -1,6 +1,7 @@
 abstract class ExecutionContext
-  # Singly-linked list of fibers. A fiber may only exist within a single `Queue`
-  # at any given time.
+  # Singly-linked list of fibers.
+  # Last-in, first-out (LIFO) semantic.
+  # A fiber can only exist within a single `Queue` at any time.
   #
   # Not thread-safe. An external lock is needed for concurrent accesses.
   #
@@ -15,7 +16,7 @@ abstract class ExecutionContext
       @tail = fiber if @tail.nil?
     end
 
-    def push_back_all(queue : Queue*) : Nil
+    def bulk_unshift(queue : Queue*) : Nil
       return unless last = queue.value.@tail
       last.schedlink = nil
 
@@ -27,10 +28,12 @@ abstract class ExecutionContext
       @tail = queue.value.@tail
     end
 
+    @[AlwaysInline]
     def pop : Fiber
       pop { raise IndexError.new }
     end
 
+    @[AlwaysInline]
     def pop? : Fiber?
       pop { nil }
     end
