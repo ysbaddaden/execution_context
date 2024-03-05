@@ -20,7 +20,7 @@ abstract class ExecutionContext
     end
 
     # Tries to push fiber on the local runnable queue. If the run queue is full,
-    # pushes fiber on the global queue.
+    # pushes fiber on the global queue, which will grab the global lock.
     #
     # Executed only by the owner.
     def push(fiber : Fiber) : Nil
@@ -39,20 +39,17 @@ abstract class ExecutionContext
 
         return if push_slow(fiber, head, tail)
 
+        # failed to advance head (another scheduler stole fibers),
         # the queue isn't full, now the push above must succeed
       end
     end
 
-    # Pushes `fiber`, along with a batch of fibers from local queue to the
-    # global queue.
-    #
-    # Executed only by the owner.
     private def push_slow(fiber : Fiber, head : UInt32, tail : UInt32) : Bool
       n = (tail &- head) // 2
       raise "BUG: queue is not full" if n != N // 2
 
       # first, try to grab a batch of fibers from local queue
-      batch = uninitialized StaticArray(Fiber, N)
+      batch = uninitialized Fiber[N]
       n.times do |i|
         batch.to_unsafe[i] = @buffer.to_unsafe[(head &+ i) % N]
       end
@@ -68,18 +65,18 @@ abstract class ExecutionContext
       end
       queue = Queue.new(batch.to_unsafe[0], batch.to_unsafe[n])
 
-      # now put the batch on global queue
+      # now put the batch on global queue (grabs the global lock)
       @global_queue.push(pointerof(queue), (n &+ 1).to_i32)
 
       true
     end
 
     # Tries to enqueue all the fibers in `queue` into the local queue. If the
-    # queue is full, they are put on the global queue; in that case this will
-    # temporarily acquire the global queue lock.
+    # queue is full, the overflow will be pushed to the global queue; in that
+    # case this will temporarily acquire the global queue lock.
     #
     # Executed only by the owner.
-    def push(queue : Queue*, size : Int32) : Nil
+    def bulk_push(queue : Queue*, size : Int32) : Nil
       tail = @tail.get(:acquire) # sync with other consumers
       head = @head.get(:relaxed)
 
@@ -97,9 +94,10 @@ abstract class ExecutionContext
       @global_queue.push(queue, size) if size > 0
     end
 
-    # Dequeues one fiber from the local runnable queue.
+    # Dequeues the next runnable fiber from the local queue.
     #
     # Executed only by the owner.
+    # TODO: rename as `#shift?`
     def get? : Fiber?
       head = @head.get(:acquire) # sync with other consumers
 
@@ -116,8 +114,7 @@ abstract class ExecutionContext
     # Steals half the fibers from the local queue of `src` and puts them onto
     # the local queue. Returns one of the stolen fibers, or `nil` on failure.
     #
-    # ~~Can be executed by any scheduler~~ Only executed from the owner when the
-    # local queue is empty.
+    # Only executed from the owner (when the local queue is empty).
     def steal_from(src : Runnables) : Fiber?
       tail = @tail.get(:acquire)
       n = src.grab(@buffer.to_unsafe, tail)
