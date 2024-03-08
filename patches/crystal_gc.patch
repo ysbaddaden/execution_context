@@ -3,11 +3,15 @@ index 609f71189..99350d40e 100644
 --- a/src/gc/boehm.cr
 +++ b/src/gc/boehm.cr
 @@ -374,8 +374,11 @@ module GC
-
+ 
        {% if flag?(:preview_mt) %}
          Thread.unsafe_each do |thread|
 -          if scheduler = thread.@scheduler
 -            fiber = scheduler.@current
++          # if scheduler = thread.@scheduler
++          #   fiber = scheduler.@current
++          #   GC.set_stackbottom(thread.gc_thread_handler, fiber.@stack_bottom)
++          # end
 +          if fiber = thread.@current_fiber
              GC.set_stackbottom(thread.gc_thread_handler, fiber.@stack_bottom)
            end
