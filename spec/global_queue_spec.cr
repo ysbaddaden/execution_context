@@ -104,8 +104,137 @@ describe ExecutionContext::GlobalQueue do
   end
 
   describe "thread safety" do
-    it "stress test" do
-      fail "missing test"
+    it "one by one" do
+      fibers = StaticArray(FiberCounter, 763).new do |i|
+        FiberCounter.new(Fiber.new(name: "f#{i}") { })
+      end
+
+      n = 7
+      increments = 15
+      queue = ExecutionContext::GlobalQueue.new
+      ready = Thread::WaitGroup.new(n)
+      shutdown = Thread::WaitGroup.new(n)
+
+      n.times do |i|
+        Thread.new(name: "ONE-#{i}") do |thread|
+          slept = 0
+          ready.done
+
+          loop do
+            if fiber = queue.pop?
+              fc = fibers.find { |x| x.@fiber == fiber }.not_nil!
+              queue.push(fiber) if fc.increment < increments
+              slept = 0
+            elsif slept < 100
+              slept += 1
+              Thread.sleep(1.nanosecond) # don't burn CPU
+            else
+              break
+            end
+          end
+        rescue exception
+          Crystal::System.print_error "\nthread: #{thread.name}: exception: #{exception}"
+        ensure
+          shutdown.done
+        end
+      end
+      ready.wait
+
+      fibers.each_with_index do |fc, i|
+        queue.push(fc.@fiber)
+        Thread.sleep(10.nanoseconds) if i % 10 == 9
+      end
+
+      shutdown.wait
+
+      # must have dequeued each fiber exactly X times
+      fibers.each { |fc| fc.counter.should eq(increments) }
+    end
+
+    it "bulk operations" do
+      n = 7
+      increments = 15
+
+      fibers = StaticArray(FiberCounter, 765).new do |i| # 765 can be divided by 3 and 5
+        FiberCounter.new(Fiber.new(name: "f#{i}") { })
+      end
+
+      queue = ExecutionContext::GlobalQueue.new
+      ready = Thread::WaitGroup.new(n)
+      shutdown = Thread::WaitGroup.new(n)
+
+      n.times do |i|
+        Thread.new(name: "BULK-#{i}") do |thread|
+          slept = 0
+
+          r = FakeRunnables.new(rand(3..12))
+
+          batch = ExecutionContext::Queue.new(nil, nil)
+          size = 0
+
+          reenqueue = ->{
+            if size > 0
+              queue.push(pointerof(batch), size)
+              names = [] of String?
+              batch.each { |f| names << f.name }
+              batch.clear
+              size = 0
+            end
+          }
+
+          execute = ->(fiber : Fiber) {
+            fc = fibers.find { |x| x.@fiber == fiber }.not_nil!
+
+            if fc.increment < increments
+              batch.push(fc.@fiber)
+              size += 1
+            end
+          }
+
+          ready.done
+
+          loop do
+            if fiber = r.get?
+              execute.call(fiber)
+              slept = 0
+              next
+            end
+
+            if fiber = queue.grab?(r, 1)
+              reenqueue.call
+              execute.call(fiber)
+              slept = 0
+              next
+            end
+
+            if slept >= 100
+              break
+            end
+
+            reenqueue.call
+            slept += 1
+            Thread.sleep(1.nanosecond) # don't burn CPU
+          end
+        rescue exception
+          Crystal::System.print_error "\nthread #{thread.name} raised: #{exception}"
+        ensure
+          shutdown.done
+        end
+      end
+      ready.wait
+
+      # enqueue in batches of 5
+      0.step(to: fibers.size - 1, by: 5) do |i|
+        q = ExecutionContext::Queue.new(nil, nil)
+        5.times { |j| q.push(fibers[i + j].@fiber) }
+        queue.push(pointerof(q), 5)
+        Thread.sleep(10.nanoseconds) if i % 4 == 3
+      end
+
+      shutdown.wait
+
+      # must have dequeued each fiber exactly X times (no less, no more)
+      fibers.each { |fc| fc.counter.should eq(increments) }
     end
   end
 end

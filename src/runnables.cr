@@ -7,6 +7,8 @@ abstract class ExecutionContext
   #
   # Private to an execution context scheduler, except for stealing methods that
   # can be called from any thread in the execution context.
+  #
+  # Ported from Go's `runq*` functions.
   class Runnables(N)
     def initialize(@global_queue : GlobalQueue)
       @head = Atomic(UInt32).new(0)
@@ -24,9 +26,10 @@ abstract class ExecutionContext
     #
     # Executed only by the owner.
     def push(fiber : Fiber) : Nil
+      # ported from Go: runqput
       loop do
         head = @head.get(:acquire) # sync with consumers
-        tail = @tail.get(:acquire)
+        tail = @tail.get(:relaxed)
 
         if (tail &- head) < N
           # put fiber to local queue
@@ -37,7 +40,9 @@ abstract class ExecutionContext
           return
         end
 
-        return if push_slow(fiber, head, tail)
+        if push_slow(fiber, head, tail)
+          return
+        end
 
         # failed to advance head (another scheduler stole fibers),
         # the queue isn't full, now the push above must succeed
@@ -45,11 +50,12 @@ abstract class ExecutionContext
     end
 
     private def push_slow(fiber : Fiber, head : UInt32, tail : UInt32) : Bool
+      # ported from Go: runqputslow
       n = (tail &- head) // 2
       raise "BUG: queue is not full" if n != N // 2
 
       # first, try to grab a batch of fibers from local queue
-      batch = uninitialized Fiber[N]
+      batch = uninitialized Fiber[N] # actually N // 2 + 1 but that doesn't compile
       n.times do |i|
         batch.to_unsafe[i] = @buffer.to_unsafe[(head &+ i) % N]
       end
@@ -77,8 +83,10 @@ abstract class ExecutionContext
     #
     # Executed only by the owner.
     def bulk_push(queue : Queue*, size : Int32) : Nil
-      tail = @tail.get(:acquire) # sync with other consumers
-      head = @head.get(:relaxed)
+      # ported from Go: runqputbatch
+
+      head = @head.get(:acquire) # sync with other consumers
+      tail = @tail.get(:relaxed)
 
       while !queue.value.empty? && (tail &- head) < N
         fiber = queue.value.pop
@@ -99,8 +107,9 @@ abstract class ExecutionContext
     # Executed only by the owner.
     # TODO: rename as `#shift?`
     def get? : Fiber?
-      head = @head.get(:acquire) # sync with other consumers
+      # ported from Go: runqget
 
+      head = @head.get(:acquire) # sync with other consumers
       loop do
         tail = @tail.get(:relaxed)
         return if tail == head
@@ -116,7 +125,9 @@ abstract class ExecutionContext
     #
     # Only executed from the owner (when the local queue is empty).
     def steal_from(src : Runnables) : Fiber?
-      tail = @tail.get(:acquire)
+      # ported from Go: runqsteal
+
+      tail = @tail.get(:relaxed) # Go: lazy_get
       n = src.grab(@buffer.to_unsafe, tail)
       return if n == 0
 
@@ -125,7 +136,9 @@ abstract class ExecutionContext
       return fiber if n == 0
 
       head = @head.get(:acquire) # sync with consumers
-      raise "BUG: local queue overflow" if tail &- head &+ n >= N
+      if tail &- head &+ n >= N
+        raise "BUG: local queue overflow"
+      end
 
       # make the fibers available for consumption
       @tail.set(tail &+ n, :release)
@@ -133,20 +146,25 @@ abstract class ExecutionContext
       fiber
     end
 
-    # Grabs a batch of fibers from local queue into `buffer` (normally the ring
-    # buffer of another `Runnables`) starting at `buffer_head`. Returns number
-    # of grabbed fibers.
+    # Grabs a batch of fibers from local queue into `buffer` of size N (normally
+    # the ring buffer of another `Runnables`) starting at `buffer_head`. Returns
+    # number of grabbed fibers.
     #
     # Can be executed by any scheduler.
     protected def grab(buffer : Fiber*, buffer_head : UInt32) : UInt32
-      head = @head.get(:acquire) # sync with other consumers
+      # ported from Go: runqgrab
 
+      head = @head.get(:acquire) # sync with other consumers
       loop do
         tail = @tail.get(:acquire) # sync with the producer
-        n = (tail &- head) // 2
 
+        n = (tail &- head) // 2
         return 0_u32 if n == 0 # queue is empty
-        next if n > N // 2 # read inconsistent head and tail
+
+        if n > N // 2
+          # read inconsistent head and tail
+          next
+        end
 
         n.times do |i|
           fiber = @buffer.to_unsafe[(head &+ i) % N]
@@ -162,7 +180,7 @@ abstract class ExecutionContext
     # def empty? : Bool
     #   head = @head.get(:relaxed)
     #   tail = @tail.get(:relaxed)
-    #   tail &- head == 0
+    #   head == tail
     # end
   end
 end

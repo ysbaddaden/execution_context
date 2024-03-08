@@ -110,7 +110,7 @@ describe ExecutionContext::Runnables do
   end
 
   describe "#get?" do
-    # ...
+    # TODO: need specific tests (though we already use it in the above tests?)
   end
 
   describe "#steal_from" do
@@ -145,7 +145,84 @@ describe ExecutionContext::Runnables do
 
   describe "thread safety" do
     it "stress test" do
-      fail "missing test"
+      n = 7
+      increments = 91
+
+      fibers = StaticArray(FiberCounter, 1800).new do |i|
+        FiberCounter.new(Fiber.new(name: "f#{i}") { })
+      end
+
+      global_queue = ExecutionContext::GlobalQueue.new
+      ready = Thread::WaitGroup.new(n)
+      shutdown = Thread::WaitGroup.new(n)
+
+      all_runnables = Array(ExecutionContext::Runnables(16)).new(n) do
+        ExecutionContext::Runnables(16).new(global_queue)
+      end
+
+      n.times do |i|
+        Thread.new(name: "RUN-#{i}") do |thread|
+          runnables = all_runnables[i]
+          slept = 0
+
+          execute = ->(fiber : Fiber) {
+            fc = fibers.find { |x| x.@fiber == fiber }.not_nil!
+            runnables.push(fc.@fiber) if fc.increment < increments
+          }
+
+          ready.done
+
+          loop do
+            # dequeue from local queue
+            if fiber = runnables.get?
+              execute.call(fiber)
+              slept = 0
+              next
+            end
+
+            # steal from another queue
+            while (r = all_runnables.sample) == runnables
+            end
+            if fiber = runnables.steal_from(r)
+              execute.call(fiber)
+              slept = 0
+              next
+            end
+
+            # dequeue from global queue (initial)
+            if fiber = global_queue.grab?(runnables, n)
+              execute.call(fiber)
+              slept = 0
+              next
+            end
+
+            if slept >= 100
+              break
+            end
+
+            slept += 1
+            Thread.sleep(1.nanosecond) # don't burn CPU
+          end
+        rescue exception
+          Crystal::System.print_error "\nthread #{thread.name} raised: #{exception}"
+        ensure
+          shutdown.done
+        end
+      end
+      ready.wait
+
+      # enqueue in batches
+      0.step(to: fibers.size - 1, by: 9) do |i|
+        q = ExecutionContext::Queue.new(nil, nil)
+        9.times { |j| q.push(fibers[i + j].@fiber) }
+        global_queue.push(pointerof(q), 9)
+        Thread.sleep(10.nanoseconds) if i % 2 == 1
+      end
+
+      shutdown.wait
+
+      # must have dequeued each fiber exactly X times (no less, no more)
+      fibers.each { |fc| fc.counter.should eq(increments) }
     end
   end
 end

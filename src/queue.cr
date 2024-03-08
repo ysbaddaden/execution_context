@@ -6,6 +6,7 @@ abstract class ExecutionContext
   # Not thread-safe. An external lock is needed for concurrent accesses.
   #
   # TODO: rename as Fiber::Queue (?)
+  # TODO: LIFO semantic is weird (inherited from Go's gQueue); shall we consider FIFO instead?
   struct Queue
     def initialize(@head : Fiber?, @tail : Fiber?)
     end
@@ -42,6 +43,7 @@ abstract class ExecutionContext
       if fiber = @head
         @head = fiber.schedlink
         @tail = nil if @head.nil?
+        fiber.schedlink = nil
         fiber
       else
         yield
@@ -53,8 +55,16 @@ abstract class ExecutionContext
       @head == nil
     end
 
-    # def clear
-    #   @head = @tail = nil
-    # end
+    def clear
+      @head = @tail = nil
+    end
+
+    def each(&) : Nil
+      cursor = @head
+      while cursor
+        yield cursor
+        cursor = cursor.schedlink
+      end
+    end
   end
 end

@@ -7,6 +7,8 @@ abstract class ExecutionContext
   #
   # Individual methods aren't thread safe. Calling `#lock` is required for
   # concurrent accesses.
+  #
+  # Ported from Go's `globrunq*` functions.
   class GlobalQueue
     def initialize
       @queue = Queue.new(nil, nil)
@@ -26,15 +28,20 @@ abstract class ExecutionContext
       @size += 1
     end
 
-    # Grabs the lock and puts a runnable fibers on the global runnable queue.
+    # Grabs the lock and puts a runnable fiber on the global runnable queue.
     # `size` is the number of fibers in `queue`.
+    #
+    # TODO: rename as `#bulk_push`
     def push(queue : Queue*, size : Int32) : Nil
       lock { unsafe_push(queue, size) }
     end
 
-    # Puts a runnable fibers on the global runnable queue. Assumes the lock is
+    # Puts a runnable fiber on the global runnable queue. Assumes the lock is
     # currently held. `size` is the number of fibers in `queue`.
+    #
+    # TODO: rename as `#unsafe_bulk_push`
     def unsafe_push(queue : Queue*, size : Int32) : Nil
+      # ported from Go: globrunqputbatch
       @queue.bulk_unshift(queue)
       @size += size
     end
@@ -71,6 +78,7 @@ abstract class ExecutionContext
     # `divisor` is meant for fair distribution of fibers across threads in the
     # execution context; it should be the number of threads.
     def unsafe_grab?(runnables, divisor : Int32) : Fiber?
+      # ported from Go: globrunqget
       return if @size == 0
 
       n = {
