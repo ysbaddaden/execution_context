@@ -37,9 +37,9 @@ describe ExecutionContext::GlobalQueue do
   end
 
   it "#unsafe_push and #unsafe_pop" do
-    f1 = Fiber.new(name: "f1") {}
-    f2 = Fiber.new(name: "f2") {}
-    f3 = Fiber.new(name: "f3") {}
+    f1 = Fiber.new(name: "f1") { }
+    f2 = Fiber.new(name: "f2") { }
+    f3 = Fiber.new(name: "f3") { }
 
     q = ExecutionContext::GlobalQueue.new
     q.unsafe_push(f1)
@@ -68,7 +68,7 @@ describe ExecutionContext::GlobalQueue do
 
     it "grabs fibers" do
       q = ExecutionContext::GlobalQueue.new
-      fibers = 10.times.map { |i| Fiber.new(name: "f#{i}") {} }.to_a
+      fibers = 10.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
       fibers.each { |f| q.unsafe_push(f) }
 
       runnables = FakeRunnables.new(6)
@@ -89,7 +89,7 @@ describe ExecutionContext::GlobalQueue do
     end
 
     it "can't grab more than available" do
-      f = Fiber.new {}
+      f = Fiber.new { }
       q = ExecutionContext::GlobalQueue.new
       q.unsafe_push(f)
 

@@ -16,7 +16,7 @@ abstract class ExecutionContext
     # {% if flag?(:mt) %}
     #   @@default = MultiThreaded.default(default_workers_count)
     # {% else %}
-       @@default = SingleThreaded.default
+    @@default = SingleThreaded.default
     # {% end %}
   end
 

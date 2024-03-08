@@ -35,6 +35,10 @@ class Thread
       detach { system_close }
     end
   end
+
+  def scheduler : Crystal::Scheduler
+    raise "BUG: deprecated call to Thread#scheduler"
+  end
 end
 
 class Thread::WaitGroup
@@ -56,4 +60,3 @@ class Thread::WaitGroup
     end
   end
 end
-

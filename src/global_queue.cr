@@ -82,9 +82,9 @@ abstract class ExecutionContext
       return if @size == 0
 
       n = {
-        @size,                  # can't grab more than available
-        @size // divisor + 1,   # divide + try to take at least 1 fiber
-        runnables.capacity // 2 # refill half the destination queue
+        @size,                   # can't grab more than available
+        @size // divisor + 1,    # divide + try to take at least 1 fiber
+        runnables.capacity // 2, # refill half the destination queue
       }.min
 
       @size -= n

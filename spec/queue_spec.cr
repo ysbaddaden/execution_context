@@ -11,8 +11,8 @@ describe ExecutionContext::Queue do
     end
 
     it "creates a filled queue" do
-      f1 = Fiber.new(name: "f1") {}
-      f2 = Fiber.new(name: "f2") {}
+      f1 = Fiber.new(name: "f1") { }
+      f2 = Fiber.new(name: "f2") { }
       f1.schedlink = f2
       f2.schedlink = nil
 
@@ -26,9 +26,9 @@ describe ExecutionContext::Queue do
   describe "#push" do
     it "to head" do
       q = ExecutionContext::Queue.new(nil, nil)
-      f1 = Fiber.new(name: "f1") {}
-      f2 = Fiber.new(name: "f2") {}
-      f3 = Fiber.new(name: "f3") {}
+      f1 = Fiber.new(name: "f1") { }
+      f2 = Fiber.new(name: "f2") { }
+      f3 = Fiber.new(name: "f3") { }
 
       # simulate fibers previously added to other queues
       f1.schedlink = f3
@@ -60,9 +60,9 @@ describe ExecutionContext::Queue do
   describe "#bulk_unshift" do
     it "to empty queue" do
       # manually create a queue
-      f1 = Fiber.new(name: "f1") {}
-      f2 = Fiber.new(name: "f2") {}
-      f3 = Fiber.new(name: "f3") {}
+      f1 = Fiber.new(name: "f1") { }
+      f2 = Fiber.new(name: "f2") { }
+      f3 = Fiber.new(name: "f3") { }
       f3.schedlink = f2
       f2.schedlink = f1
       f1.schedlink = nil
@@ -76,11 +76,11 @@ describe ExecutionContext::Queue do
     end
 
     it "to filled queue" do
-      f1 = Fiber.new(name: "f1") {}
-      f2 = Fiber.new(name: "f2") {}
-      f3 = Fiber.new(name: "f3") {}
-      f4 = Fiber.new(name: "f4") {}
-      f5 = Fiber.new(name: "f5") {}
+      f1 = Fiber.new(name: "f1") { }
+      f2 = Fiber.new(name: "f2") { }
+      f3 = Fiber.new(name: "f3") { }
+      f4 = Fiber.new(name: "f4") { }
+      f5 = Fiber.new(name: "f5") { }
 
       # source queue
       f3.schedlink = f2
@@ -108,9 +108,9 @@ describe ExecutionContext::Queue do
 
   describe "#pop" do
     it "from head" do
-      f1 = Fiber.new(name: "f1") {}
-      f2 = Fiber.new(name: "f2") {}
-      f3 = Fiber.new(name: "f3") {}
+      f1 = Fiber.new(name: "f1") { }
+      f2 = Fiber.new(name: "f2") { }
+      f3 = Fiber.new(name: "f3") { }
       f3.schedlink = f2
       f2.schedlink = f1
       f1.schedlink = nil
@@ -138,9 +138,9 @@ describe ExecutionContext::Queue do
 
   describe "#pop?" do
     it "from head" do
-      f1 = Fiber.new(name: "f1") {}
-      f2 = Fiber.new(name: "f2") {}
-      f3 = Fiber.new(name: "f3") {}
+      f1 = Fiber.new(name: "f1") { }
+      f2 = Fiber.new(name: "f2") { }
+      f3 = Fiber.new(name: "f3") { }
       f3.schedlink = f2
       f2.schedlink = f1
       f1.schedlink = nil

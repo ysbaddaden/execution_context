@@ -31,4 +31,3 @@ class FiberCounter
     @counter.get(:relaxed)
   end
 end
-

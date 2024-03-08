@@ -140,8 +140,8 @@ abstract class ExecutionContext
       @mutex.synchronize do
         # FIXME: by the time we acquired the lock, another thread may have
         #        enqueued fiber(s) and already tried to wakup a thread (race)
-        #        => try global queue
-        #        => try stealing
+        # => try global queue
+        # => try stealing
         @parked += 1
         @condition.wait(@mutex)
         @parked -= 1

@@ -10,7 +10,7 @@ describe ExecutionContext::Runnables do
 
   describe "#push" do
     it "enqueues the fiber in local queue" do
-      fibers = 4.times.map { |i| Fiber.new(name: "f#{i}") {} }.to_a
+      fibers = 4.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
 
       # local enqueue
       g = ExecutionContext::GlobalQueue.new
@@ -26,7 +26,7 @@ describe ExecutionContext::Runnables do
     end
 
     it "moves half the local queue to the global queue on overflow" do
-      fibers = 5.times.map { |i| Fiber.new(name: "f#{i}") {} }.to_a
+      fibers = 5.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
 
       # local enqueue + overflow
       g = ExecutionContext::GlobalQueue.new
@@ -49,12 +49,12 @@ describe ExecutionContext::Runnables do
 
       4.times do
         # local
-        4.times { r.push(Fiber.new {}) }
+        4.times { r.push(Fiber.new { }) }
         2.times { r.get? }
-        2.times { r.push(Fiber.new {}) }
+        2.times { r.push(Fiber.new { }) }
 
         # overflow (2+1 fibers are sent to global queue + 1 local)
-        2.times { r.push(Fiber.new {}) }
+        2.times { r.push(Fiber.new { }) }
 
         # clear
         3.times { r.get? }
@@ -74,7 +74,7 @@ describe ExecutionContext::Runnables do
   describe "#bulk_push" do
     it "fills the local queue" do
       q = ExecutionContext::Queue.new(nil, nil)
-      fibers = 4.times.map { |i| Fiber.new(name: "f#{i}") {} }.to_a
+      fibers = 4.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
       fibers.each { |f| q.push(f) }
 
       # local enqueue
@@ -88,7 +88,7 @@ describe ExecutionContext::Runnables do
 
     it "pushes the overflow to the global queue" do
       q = ExecutionContext::Queue.new(nil, nil)
-      fibers = 7.times.map { |i| Fiber.new(name: "f#{i}") {} }.to_a
+      fibers = 7.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
       fibers.each { |f| q.push(f) }
 
       # local enqueue + overflow
@@ -116,7 +116,7 @@ describe ExecutionContext::Runnables do
   describe "#steal_from" do
     it "steals from another runnables" do
       g = ExecutionContext::GlobalQueue.new
-      fibers = 6.times.map { |i| Fiber.new(name: "f#{i}") {} }.to_a
+      fibers = 6.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
 
       # fill the source queue
       r1 = ExecutionContext::Runnables(16).new(g)
