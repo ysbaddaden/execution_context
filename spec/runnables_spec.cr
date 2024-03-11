@@ -146,9 +146,11 @@ describe ExecutionContext::Runnables do
   describe "thread safety" do
     it "stress test" do
       n = 7
-      increments = 91
+      increments = 7919
 
-      fibers = StaticArray(FiberCounter, 1800).new do |i|
+      # less fibers than space in runnables (so threads can starve)
+      # 54 is roughly half of 16 × 7 and can be divided by 9 (for batch enqueues below)
+      fibers = Array(FiberCounter).new(54) do |i|
         FiberCounter.new(Fiber.new(name: "f#{i}") { })
       end
 
@@ -167,7 +169,7 @@ describe ExecutionContext::Runnables do
 
           execute = ->(fiber : Fiber) {
             fc = fibers.find { |x| x.@fiber == fiber }.not_nil!
-            runnables.push(fc.@fiber) if fc.increment < increments
+            runnables.push(fiber) if fc.increment < increments
           }
 
           ready.done
@@ -189,7 +191,7 @@ describe ExecutionContext::Runnables do
               next
             end
 
-            # dequeue from global queue (initial)
+            # dequeue from global queue
             if fiber = global_queue.grab?(runnables, n)
               execute.call(fiber)
               slept = 0
