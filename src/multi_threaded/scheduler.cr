@@ -95,10 +95,8 @@ abstract class ExecutionContext
       private def dequeue? : Fiber?
         # every once in a while: dequeue from global queue to avoid two fibers
         # constantly respawing each other to completely occupy the local queue
-        #
-        # FIXME: dequeue one or grab a batch of fibers (?)
         if (@tick &+= 1) % 61 == 0
-          if fiber = global_dequeue?
+          if fiber = @execution_context.global_queue.pop?
             return fiber
           end
         end
@@ -108,7 +106,7 @@ abstract class ExecutionContext
           return fiber
         end
 
-        # dequeue from global queue
+        # dequeue from global queue (tries to refill local queue)
         if fiber = global_dequeue?
           return fiber
         end
