@@ -30,7 +30,9 @@ abstract class ExecutionContext
 
       # :nodoc:
       def stack_pool : Fiber::StackPool
-        @execution_context.stack_pool
+        # TODO: there should be one stack pool per execution context
+        # @execution_context.stack_pool
+        @stack_pool ||= Fiber::StackPool.new
       end
 
       # Unlike `ExecutionContext::MultiThreaded#enqueue` this method is only

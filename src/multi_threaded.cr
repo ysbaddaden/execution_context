@@ -15,7 +15,6 @@ abstract class ExecutionContext
     getter? idle : Bool = false
 
     protected getter global_queue : GlobalQueue = GlobalQueue.new
-    getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
 
     # :nodoc:
     def self.default(size : Int32) : self
@@ -94,6 +93,11 @@ abstract class ExecutionContext
     def enqueue(fiber : Fiber) : Nil
       @global_queue.push(fiber)
       unpark_idle_thread
+    end
+
+    # TODO: there should be one stack pool per execution context (not per scheduler)
+    def stack_pool : Fiber::StackPool
+      raise "BUG: call #{self.class.name}#Scheduler#stack_pool instead of {self.class.name}#stack_pool"
     end
 
     # TODO: there should be one event loop per execution context (not per scheduler)
