@@ -21,7 +21,7 @@ abstract class ExecutionContext
   end
 
   def self.default_workers_count : Int32
-    ENV["CRYSTAL_WORKERS"]?.try(&.to_i?) || System.cpu_count.to_i
+    ENV["CRYSTAL_WORKERS"]?.try(&.to_i?) || Math.min(System.cpu_count.to_i, 32)
   end
 
   # Returns the `ExecutionContext` instance that the current thread/fiber is
