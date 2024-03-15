@@ -32,7 +32,7 @@ abstract class ExecutionContext
         wg.wait
       end
 
-      # TODO: enqueue stack pool collector fiber
+      # self.spawn { stack_pool.collect_loop }
     end
 
     # Setups the scheduler inside the current thread.

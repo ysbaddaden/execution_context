@@ -7,13 +7,12 @@ abstract class ExecutionContext
   # TODO: M schedulers running on N threads (M <= N)
   # TODO: move a scheduler to another thread (e.g. cpu bound fiber is holding
   #       the thread and is blocking runnable fibers)
-  #       the thread)
   # TODO: resize (grow or shrink)
   class MultiThreaded < ExecutionContext
     getter name : String
     getter size : Int32
     getter? idle : Bool = false
-
+    getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
     protected getter global_queue : GlobalQueue = GlobalQueue.new
 
     # :nodoc:
@@ -37,6 +36,8 @@ abstract class ExecutionContext
       @parked = 0
 
       start_schedulers(@size, hijack)
+
+      # self.spawn { stack_pool.collect_loop }
     end
 
     # Starts `count` schedulers and threads.
@@ -93,11 +94,6 @@ abstract class ExecutionContext
     def enqueue(fiber : Fiber) : Nil
       @global_queue.push(fiber)
       unpark_idle_thread
-    end
-
-    # TODO: there should be one stack pool per execution context (not per scheduler)
-    def stack_pool : Fiber::StackPool
-      raise "BUG: call #{self.class.name}#Scheduler#stack_pool instead of {self.class.name}#stack_pool"
     end
 
     # TODO: there should be one event loop per execution context (not per scheduler)

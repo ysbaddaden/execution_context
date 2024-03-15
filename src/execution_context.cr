@@ -95,7 +95,15 @@ abstract class ExecutionContext
   # `ExecutionContext.reschedule` instead.
   protected abstract def reschedule : Nil
 
+  {% unless flag?(:interpreted) %}
+    @dead_fiber : Fiber?
+  {% end %}
+
   # Suspends the execution of the current fiber and resumes `fiber`.
+  #
+  # Handles thread safety around fiber stacks (releasing the stack of a dead
+  # fiber, locking the GC to not start a collection while we're switching
+  # context) and resuming a stolen fiber.
   #
   # Unsafe. Must only be called on `ExecutionContext.current`. Caller must
   # ensure that the fiber indeed belongs to the current execution context.
@@ -103,10 +111,22 @@ abstract class ExecutionContext
   protected def resume(fiber : Fiber) : Nil
     validate_resumable(fiber)
 
+    current_fiber = thread.current_fiber
+    {% unless flag?(:interpreted) %}
+      @dead_fiber = current_fiber if current_fiber.dead?
+    {% end %}
+
     GC.lock_read
-    current_fiber, thread.current_fiber = thread.current_fiber, fiber
+    thread.current_fiber = fiber
     Fiber.swapcontext(pointerof(current_fiber.@context), pointerof(fiber.@context))
     GC.unlock_read
+
+    {% unless flag?(:interpreted) %}
+      if fiber = @dead_fiber
+        @dead_fiber = nil
+        stack_pool.release(fiber.@stack)
+      end
+    {% end %}
   end
 
   # Validates that the current fiber can be resumed, and aborts otherwise.
