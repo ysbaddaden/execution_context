@@ -107,20 +107,15 @@ module ExecutionContext
     # Dequeues one fiber from the runnable queue.
     # Fallbacks to run the event queue (nonblocking).
     protected def dequeue? : Fiber?
-      loop do
+      if fiber = @lock.sync { @runnables.shift? }
+        return fiber
+      end
+
+      if @event_loop.run(blocking: true)
+        # event loop may have enqueued a new fiber (or not)
         if fiber = @lock.sync { @runnables.shift? }
           return fiber
         end
-
-        if @event_loop.run(blocking: true)
-          # event loop may have enqueued a new fiber (or not)
-          if fiber = @lock.sync { @runnables.shift? }
-            return fiber
-          end
-        end
-
-        # nothing to do
-        return
       end
     end
 
@@ -189,7 +184,7 @@ module ExecutionContext
     end
 
     private def deep_sleep_fiber : Fiber
-      @deep_sleep_fiber ||= Fiber.new(name: "#{@name}:sleep", execution_context: self) do
+      @deep_sleep_fiber ||= Fiber.new("#{@name}:sleep", self) do
         loop do
           resume @fiber_channel.receive
         end
