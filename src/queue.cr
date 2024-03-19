@@ -1,4 +1,4 @@
-abstract class ExecutionContext
+module ExecutionContext
   # Singly-linked list of fibers.
   # Last-in, first-out (LIFO) semantic.
   # A fiber can only exist within a single `Queue` at any time.

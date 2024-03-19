@@ -1,16 +1,22 @@
-abstract class ExecutionContext
+module ExecutionContext
+  # TODO: consider a specific implementation with a mere @runnext : Fiber? property
   # TODO: shutdown the context when @fiber is dead
   class Isolated < SingleThreaded
     @spawn_context : ExecutionContext
-    @fiber = uninitialized Fiber
+    private getter! fiber : Fiber
 
     def initialize(name : String, @spawn_context = ExecutionContext.default, &block)
       super name, hijack: false
-      @fiber = Fiber.new(name: name, execution_context: self, &block)
-      enqueue @fiber
+      @fiber = fiber = Fiber.new(name, self, &block)
+      enqueue fiber
     end
 
-    def spawn(name : String? = nil, same_thread : Bool = false, &block) : Fiber
+    def spawn(*, name : String? = nil, &block : ->) : Fiber
+      @spawn_context.spawn(name: name, &block)
+    end
+
+    @[Deprecated]
+    def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
       raise ArgumentError.new("#{self.class.name}#spawn doesn't support same_thread:true") if same_thread
       @spawn_context.spawn(name: name, &block)
     end
@@ -19,7 +25,7 @@ abstract class ExecutionContext
       if fiber == @fiber || fiber == @main_fiber
         super
       else
-        raise RuntimeError.new("Can't resume #{fiber} in #{self}")
+        raise RuntimeError.new("Can't enqueue #{fiber} in #{self}")
       end
     end
   end

@@ -13,7 +13,8 @@ class Crystal::Scheduler
 
   @[AlwaysInline]
   def self.event_loop
-    ExecutionContext.current.event_loop
+    # ExecutionContext.current.event_loop
+    ExecutionContext::Scheduler.current.event_loop
   end
 
   @[AlwaysInline]
@@ -43,7 +44,8 @@ class Crystal::Scheduler
 
   @[AlwaysInline]
   def self.yield : Nil
-    ExecutionContext.yield
+    Fiber.current.resume_event.add(0.seconds)
+    ExecutionContext.reschedule
   end
 
   @[AlwaysInline]

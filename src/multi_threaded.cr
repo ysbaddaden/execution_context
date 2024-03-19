@@ -1,32 +1,35 @@
 require "./global_queue"
 require "./multi_threaded/scheduler"
 
-abstract class ExecutionContext
+module ExecutionContext
   # A MT scheduler. Owns multiple threads and starts a scheduler in each one.
   #
   # TODO: M schedulers running on N threads (M <= N)
   # TODO: move a scheduler to another thread (e.g. cpu bound fiber is holding
   #       the thread and is blocking runnable fibers)
   # TODO: resize (grow or shrink)
-  class MultiThreaded < ExecutionContext
+  class MultiThreaded
+    include ExecutionContext
+
     getter name : String
     getter size : Int32
     getter? idle : Bool = false
     getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
-    protected getter global_queue : GlobalQueue = GlobalQueue.new
+    protected getter global_queue : GlobalQueue
 
     # :nodoc:
     def self.default(size : Int32) : self
-      new "DEFAULT", size, hijack: true
+      new("DEFAULT", size, hijack: true)
     end
 
     def self.new(name : String, size : Int32) : self
-      new name, size, hijack: false
+      new(name, size, hijack: false)
     end
 
     protected def initialize(@name : String, @size = 1, hijack = false)
       raise "ERROR: needs at least one thread" if @size <= 0
 
+      @global_queue = GlobalQueue.new
       @schedulers = Array(Scheduler).new(@size)
       @threads = Array(Thread).new(@size)
       @rng = Random::PCG32.new
@@ -37,7 +40,9 @@ abstract class ExecutionContext
 
       start_schedulers(@size, hijack)
 
-      # self.spawn { stack_pool.collect_loop }
+      # self.spawn(name: "#{@name}:stackpool-collect") do
+      #   stack_pool.collect_loop
+      # end
     end
 
     # Starts `count` schedulers and threads.
@@ -67,53 +72,53 @@ abstract class ExecutionContext
     # main thread).
     private def hijack_current_thread(scheduler, index) : Thread
       thread = Thread.current
-      thread.execution_context = scheduler
+      Thread.name = scheduler.name
+      thread.execution_context = self
+      thread.current_scheduler = scheduler
       scheduler.thread = thread
-      scheduler.main_fiber = scheduler.spawn(name: "#{@name}-#{index}-main") do
+
+      scheduler.main_fiber = scheduler.spawn(name: "#{@name}-#{index}:loop") do
         scheduler.run_loop
       end
+
       thread
     end
 
     private def start_thread(scheduler, index, &block) : Thread
-      Thread.new(name: "#{@name}-#{index}") do |thread|
-        thread.execution_context = scheduler
+      Thread.new(name: scheduler.name) do |thread|
+        thread.execution_context = self
+        thread.current_scheduler = scheduler
         scheduler.thread = thread
         scheduler.main_fiber = thread.main_fiber
-        # scheduler.main_fiber.name = "#{@name}-#{index}-main"
+        scheduler.main_fiber.name = "#{@name}-#{index}:main"
         block.call
         scheduler.run_loop
       end
     end
 
+    @[Deprecated]
     def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
       raise ArgumentError.new("#{self.class.name}#spawn doesn't support same_thread:true") if same_thread
       self.spawn(name: name, &block)
     end
 
     def enqueue(fiber : Fiber) : Nil
-      @global_queue.push(fiber)
-      unpark_idle_thread
+      if ExecutionContext.current == self
+        # within current context: push to local queue of current scheduler
+        ExecutionContext::Scheduler.current.enqueue(fiber)
+      else
+        # cross context: push to global queue
+        @global_queue.push(fiber)
+        unpark_idle_thread
+      end
     end
 
     # TODO: there should be one event loop per execution context (not per scheduler)
-    def event_loop : Crystal::EventLoop
-      raise "BUG: call #{self.class.name}#Scheduler#event_loop instead of #{self.class.name}#event_loop"
-    end
+    # def event_loop : Crystal::EventLoop
+    #   raise "BUG: call #{self.class.name}#Scheduler#event_loop instead of #{self.class.name}#event_loop"
+    # end
 
-    protected def reschedule : Nil
-      raise "BUG: call #{self.class.name}::Scheduler#reschedule instead of #{self.class.name}#reschedule)"
-    end
-
-    protected def resume(fiber : Fiber) : Nil
-      raise "BUG: call #{self.class.name}::Scheduler#resume instead of #{self.class.name}#resume)"
-    end
-
-    protected def validate_resumable(fiber : Fiber) : Nil
-      raise "BUG: call #{self.class.name}::Scheduler#validate_resumable instead of #{self.class.name}#validate_resumable)"
-    end
-
-    protected def steal(scheduler : Scheduler) : Fiber?
+    protected def steal(&) : Nil
       return if @size == 1
 
       # try to steal a few times
@@ -121,13 +126,8 @@ abstract class ExecutionContext
         i = @rng.next_int
 
         @size.times do |j|
-          sched = @schedulers[(i + j) % @size]
-          next if sched == scheduler
-          # OPTIMIZE: next if scheduler.idle?
-
-          if fiber = scheduler.steal_from(sched)
-            return fiber
-          end
+          scheduler = @schedulers[(i + j) % @size]
+          yield scheduler unless scheduler.idle?
         end
 
         # back-off
@@ -136,27 +136,38 @@ abstract class ExecutionContext
     end
 
     @[AlwaysInline]
-    protected def park_thread : Nil
+    protected def park_thread(scheduler : Scheduler) : Fiber?
       @mutex.synchronize do
-        # FIXME: by the time we acquired the lock, another thread may have
-        #        enqueued fiber(s) and already tried to wakup a thread (race)
-        # => try global queue
-        # => try stealing
+        # by the time we acquired the lock, another thread may have enqueued
+        # fiber(s) and already tried to wakup a thread (race). we don't check
+        # the scheduler's local queue nor it's event loop (both are empty)
+
+        if fiber = scheduler.global_dequeue?
+          return fiber
+        end
+
+        # if fiber = scheduler.try_steal?
+        #   return fiber
+        # end
+
         @parked += 1
         @condition.wait(@mutex)
         @parked -= 1
       end
+
+      nil
     end
 
     # OPTIMIZE: there must be better heuristics than always waking up one parked
-    #           thread, for example how many fibers are queued and for how long
-    #           they have been waiting in queue
+    #           thread, for example skip when there are spinning threads, how
+    #           many fibers are queued and for how long they have been waiting
+    #           in queue
     @[AlwaysInline]
     protected def unpark_idle_thread : Nil
       return if @parked == 0
 
-      # FIXME: use trylock and return if we couldn't lock the mutex so we don't
-      #        block the current thread (oops)
+      # OPTIMIZE: use trylock and return if we couldn't lock the mutex so we don't
+      #           block the current thread!
       @mutex.synchronize do
         return if @parked == 0
 

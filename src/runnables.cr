@@ -1,6 +1,6 @@
 require "./global_queue"
 
-abstract class ExecutionContext
+module ExecutionContext
   # Local queue or runnable fibers for schedulers.
   # First-in, first-out semantics (FIFO).
   # Single producer, multiple consumers thread safety.
@@ -11,6 +11,13 @@ abstract class ExecutionContext
   # Ported from Go's `runq*` functions.
   class Runnables(N)
     def initialize(@global_queue : GlobalQueue)
+      # head is an index to the buffer where the next fiber to dequeue is.
+      #
+      # tail is an index to the buffer where the next fiber to enqueue will be
+      # (on the next push).
+      #
+      # head is always behind tail (not empty) or equal (empty) but never after
+      # tail (the queue would have a negative size => bug).
       @head = Atomic(UInt32).new(0)
       @tail = Atomic(UInt32).new(0)
       @buffer = uninitialized Fiber[N]
@@ -54,7 +61,7 @@ abstract class ExecutionContext
       n = (tail &- head) // 2
       raise "BUG: queue is not full" if n != N // 2
 
-      # first, try to grab a batch of fibers from local queue
+      # first, try to grab half of the fibers from local queue
       batch = uninitialized Fiber[N] # actually N // 2 + 1 but that doesn't compile
       n.times do |i|
         batch.to_unsafe[i] = @buffer.to_unsafe[(head &+ i) % N]
@@ -127,10 +134,11 @@ abstract class ExecutionContext
     def steal_from(src : Runnables) : Fiber?
       # ported from Go: runqsteal
 
-      tail = @tail.get(:relaxed) # Go: lazy_get
+      tail = @tail.get(:relaxed)
       n = src.grab(@buffer.to_unsafe, tail)
       return if n == 0
 
+      # 'dequeue' last fiber from @buffer
       n &-= 1
       fiber = @buffer.to_unsafe[(tail &+ n) % N]
       return fiber if n == 0
@@ -163,6 +171,7 @@ abstract class ExecutionContext
 
         if n > N // 2
           # read inconsistent head and tail
+          head = @head.get(:acquire)
           next
         end
 
@@ -171,16 +180,20 @@ abstract class ExecutionContext
           buffer[(buffer_head &+ i) % N] = fiber
         end
 
+        # try to mark the fiber as consumed
         head, success = @head.compare_and_set(head, head &+ n, :acquire_release, :acquire)
         return n if success
       end
     end
 
-    # @[AlwaysInline]
-    # def empty? : Bool
-    #   head = @head.get(:relaxed)
-    #   tail = @tail.get(:relaxed)
-    #   head == tail
-    # end
+    @[AlwaysInline]
+    def empty? : Bool
+      @head.get(:relaxed) == @tail.get(:relaxed)
+    end
+
+    @[AlwaysInline]
+    def size : UInt32
+      @tail.get(:relaxed) &- @head.get(:relaxed)
+    end
   end
 end

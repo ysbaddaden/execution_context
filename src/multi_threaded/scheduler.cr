@@ -1,7 +1,9 @@
 require "../runnables"
 
-abstract class ExecutionContext
-  class MultiThreaded < ExecutionContext
+module ExecutionContext
+  class MultiThreaded
+    include ExecutionContext
+
     # Fiber scheduler. Owns a thread inside a MT execution context.
     #
     # Inherits from `ExecutionContext` to be the target for calls to the current
@@ -10,22 +12,27 @@ abstract class ExecutionContext
     # enqueues.
     #
     # TODO: cooperative shutdown (e.g. when shrinking number of schedulers)
-    class Scheduler < ExecutionContext
+    class Scheduler
+      include ExecutionContext::Scheduler
+
       protected property execution_context : MultiThreaded
       protected property! thread : Thread
       protected property! main_fiber : Fiber
+      protected getter name : String
 
       @runnables : Runnables(256)
 
       # TODO: should eventually have one EL per EC
-      getter event_loop : Crystal::EventLoop = Crystal::EventLoop.create
+      getter event_loop : Crystal::EventLoop
 
       property? idle : Bool = false
+
       @tick : Int32 = 0
       @name : String
 
       protected def initialize(@execution_context, @name)
         @runnables = Runnables(256).new(@execution_context.global_queue)
+        @event_loop = Crystal::EventLoop.create
       end
 
       # :nodoc:
@@ -33,24 +40,22 @@ abstract class ExecutionContext
         @execution_context.stack_pool
       end
 
-      # Unlike `ExecutionContext::MultiThreaded#enqueue` this method is only
-      # safe to call on `ExecutionContext.current` which should always be the
-      # case, since cross context enqueues will call EC::MT#enqueue).
-      def enqueue(fiber : Fiber) : Nil
-        # LibC.dprintf 2, "thread=0x#{LibC.pthread_self.to_s(16)} mt.scheduler#enqueue fiber=0x#{fiber.object_id.to_s(16)}\n"
-
-        @runnables.push(fiber)
-        @execution_context.unpark_idle_thread
-      end
-
+      @[Deprecated]
       def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
         raise RuntimeError.new("#{self.class.name}#spawn doesn't support same_thread:true") if same_thread
         self.spawn(name: name, &block)
       end
 
-      protected def reschedule : Nil
-        # LibC.dprintf 2, "thread=0x#{LibC.pthread_self.to_s(16)} mt.scheduler#reschedule fiber=0x#{Fiber.current.object_id.to_s(16)}\n"
+      # Unlike `ExecutionContext::MultiThreaded#enqueue` this method is only
+      # safe to call on `ExecutionContext.current` which should always be the
+      # case, since cross context enqueues will call EC::MT#enqueue through
+      # Fiber#enqueue).
+      protected def enqueue(fiber : Fiber) : Nil
+        @runnables.push(fiber)
+        @execution_context.unpark_idle_thread unless @runnables.empty?
+      end
 
+      protected def reschedule : Nil
         if fiber = dequeue?
           resume fiber unless fiber == thread.current_fiber
         else
@@ -58,11 +63,6 @@ abstract class ExecutionContext
           resume main_fiber
         end
       end
-
-      # protected def resume(fiber : Fiber) : Nil
-      #   LibC.dprintf 2, "thread=0x#{LibC.pthread_self.to_s(16)} mt.scheduler#resume fiber=0x#{fiber.object_id.to_s(16)}\n"
-      #   super
-      # end
 
       # In a multithreaded environment the fiber may be dequeued before its
       # running context has been saved on the stack; we must wait until the
@@ -99,12 +99,12 @@ abstract class ExecutionContext
           end
         end
 
-        # grab from local queue
+        # dequeue from local queue
         if fiber = @runnables.get?
           return fiber
         end
 
-        # dequeue from global queue (tries to refill local queue)
+        # grab from global queue (tries to refill local queue)
         if fiber = global_dequeue?
           return fiber
         end
@@ -116,22 +116,35 @@ abstract class ExecutionContext
           end
         end
 
-        # steal from another scheduler
-        if fiber = @execution_context.steal(self)
+        # steal from another scheduler (if possible)
+        if fiber = try_steal?
           return fiber
         end
       end
 
       @[AlwaysInline]
-      private def global_dequeue? : Fiber?
-        @execution_context
-          .global_queue
-          .grab?(@runnables, @execution_context.size)
+      protected def global_dequeue? : Fiber?
+        if fiber = @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
+          fiber
+        end
+      end
+
+      @[AlwaysInline]
+      protected def try_steal? : Fiber?
+        @execution_context.steal do |other|
+          if other == self
+            next
+          end
+
+          if fiber = @runnables.steal_from(other.@runnables)
+            return fiber
+          end
+        end
       end
 
       protected def run_loop : Nil
         loop do
-          # dequeue from local/global queues, poll the event-loop, steal, ...
+          # the queue should usually be empty at this point (but just in case)
           if fiber = @runnables.get?
             resume fiber
             next
@@ -156,7 +169,15 @@ abstract class ExecutionContext
           # no runnable fiber, no pending event in the local event loop: go into
           # deep sleep until another scheduler or another context enqueues a
           # fiber
-          @execution_context.park_thread
+          #
+          # OPTIMIZE: spin and sleep with an increasing back-off instead of
+          #           parking the thread immediately to try and avoid
+          #           consecutive park <-> wakeup loops
+          if fiber = @execution_context.park_thread(self)
+            @idle = false
+            resume fiber
+            next
+          end
 
           @idle = false
         rescue exception
@@ -166,11 +187,6 @@ abstract class ExecutionContext
           end
           Crystal::System.print_error(message)
         end
-      end
-
-      @[AlwaysInline]
-      protected def steal_from(scheduler : Scheduler) : Fiber?
-        @runnables.steal_from(scheduler.@runnables)
       end
 
       @[AlwaysInline]

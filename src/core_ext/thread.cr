@@ -3,6 +3,9 @@ class Thread
   getter! execution_context : ExecutionContext
 
   # :nodoc:
+  property! current_scheduler : ExecutionContext::Scheduler
+
+  # :nodoc:
   property! current_fiber : Fiber
 
   def execution_context=(@execution_context : ExecutionContext)
@@ -22,8 +25,11 @@ class Thread
   protected def start
     Thread.threads.push(self)
     Thread.current = self
-    @main_fiber = fiber = Fiber.new(stack_address, self)
-    @current_fiber = fiber
+    @current_fiber = @main_fiber = fiber = Fiber.new(stack_address, self)
+
+    if name = @name
+      self.system_name = name
+    end
 
     begin
       @func.call(self)

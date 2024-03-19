@@ -1,17 +1,19 @@
 require "./core_ext/*"
+require "./scheduler"
 require "./single_threaded"
 require "./isolated"
 require "./multi_threaded"
 
 {% raise "ERROR: execution contexts require the `preview_mt` compilation flag" unless flag?(:preview_mt) %}
 
-abstract class ExecutionContext
+module ExecutionContext
   @@default : ExecutionContext?
 
   def self.default : ExecutionContext
     @@default.not_nil!("expected default execution context to have been setup")
   end
 
+  # :nodoc:
   def self.init_default_context : Nil
     {% if flag?(:mt) %}
       @@default = MultiThreaded.default(default_workers_count)
@@ -20,115 +22,60 @@ abstract class ExecutionContext
     {% end %}
   end
 
+  # Returns the default number of workers to start in the execution context.
   def self.default_workers_count : Int32
     ENV["CRYSTAL_WORKERS"]?.try(&.to_i?) || Math.min(System.cpu_count.to_i, 32)
   end
 
-  # Returns the `ExecutionContext` instance that the current thread/fiber is
-  # running in.
-  def self.current : self
+  def self.current : ExecutionContext
     Thread.current.execution_context
   end
 
-  # the following class methods are safe accessors to the unsafe methods
-  # (that are protected). They're safe to access here because they always
-  # operate on the current context.
-
-  # Tells the current scheduler to suspend the current fiber, and to resume the
+  # Tells the current scheduler to suspend the current fiber and resume the
   # next runnable fiber. The current fiber will never be resumed; you're
   # responsible to reenqueue it.
   #
-  # This method is safe as it only operates on `.current` only.
+  # This method is safe as it only operates on the current ExecutionContext and
+  # Scheduler.
   def self.reschedule : Nil
-    current.reschedule
+    Scheduler.current.reschedule
   end
 
-  # Tells the current execution context to suspend the current fiber and to
-  # resume `fiber`. Raises `RuntimeError` if the fiber doesn't belong to the
-  # current execution context.
+  # Tells the current scheduler to suspend the current fiber and to resume
+  # `fiber` instead. The current fiber will never be resumed; you're responsible
+  # to reenqueue it.
   #
-  # This method is safe as it only operates on `.current` only.
+  # Raises `RuntimeError` if the fiber doesn't belong to the current execution
+  # context.
+  #
+  # This method is safe as it only operates on the current ExecutionContext and
+  # Scheduler.
   def self.resume(fiber : Fiber) : Nil
     if fiber.execution_context == current
-      current.resume(fiber)
+      Scheduler.current.resume(fiber)
     else
-      raise RuntimeError.new("Can't resume fiber from #{fiber.execution_context} into #{current}")
+      raise RuntimeError.new("Can't resume fiber from #{fiber.execution_context} into #{current.execution_context}")
     end
   end
 
   # Creates a new fiber then calls `#enqueue` to add it to the execution
   # context.
   #
-  # The `same_thread` parameter is legacy. `ExecutionContext::SingleThreaded`
-  # will accept it while `ExecutionContext::MultiThreaded` will raise a
-  # `ArgumentError` exception.
-  #
   # May be called from any ExecutionContext (i.e. must be thread-safe).
   def spawn(*, name : String? = nil, &block : ->) : Fiber
-    fiber = Fiber.new(name: name, execution_context: self, &block)
-    enqueue(fiber)
-    fiber
+    Fiber.new(name, self, &block).tap { |fiber| enqueue(fiber) }
   end
 
-  # Legacy support for the `same_thread` argument, or not, depending on the
-  # context.
+  # Legacy support for the `same_thread` argument. Each execution context may
+  # decide to support it or not (e.g. SingleThreaded can accept it).
+  @[Deprecated]
   abstract def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
 
   abstract def stack_pool : Fiber::StackPool
-
-  # TODO: the event loop should eventually be handled by each ExecutionContext;
-  #       might share an intance per context, have one per thread, ...
-  abstract def event_loop : Crystal::EventLoop
+  # abstract def event_loop : Crystal::EventLoop
 
   # Enqueues a fiber to be resumed inside the execution context.
   #
   # May be called from any ExecutionContext (i.e. must be thread-safe).
   abstract def enqueue(fiber : Fiber) : Nil
-
-  # TODO: can't stop execution context until fibers can be cancelled (?)
-  # abstract def stop(*, wait : Bool = true) : Nil
-
-  # Suspends the execution of the current fiber and resumes the next runnable
-  # fiber.
-  #
-  # Unsafe. Must only be called on `ExecutionContext.current`. Prefer
-  # `ExecutionContext.reschedule` instead.
-  protected abstract def reschedule : Nil
-
-  {% unless flag?(:interpreted) %}
-    @dead_fiber : Fiber?
-  {% end %}
-
-  # Suspends the execution of the current fiber and resumes `fiber`.
-  #
-  # Handles thread safety around fiber stacks (releasing the stack of a dead
-  # fiber, locking the GC to not start a collection while we're switching
-  # context) and resuming a stolen fiber.
-  #
-  # Unsafe. Must only be called on `ExecutionContext.current`. Caller must
-  # ensure that the fiber indeed belongs to the current execution context.
-  # Prefer `ExecutionContext.resume` instead.
-  protected def resume(fiber : Fiber) : Nil
-    validate_resumable(fiber)
-
-    current_fiber = thread.current_fiber
-    {% unless flag?(:interpreted) %}
-      @dead_fiber = current_fiber if current_fiber.dead?
-    {% end %}
-
-    GC.lock_read
-    thread.current_fiber = fiber
-    Fiber.swapcontext(pointerof(current_fiber.@context), pointerof(fiber.@context))
-    GC.unlock_read
-
-    {% unless flag?(:interpreted) %}
-      if fiber = @dead_fiber
-        @dead_fiber = nil
-        stack_pool.release(fiber.@stack)
-      end
-    {% end %}
-  end
-
-  # Validates that the current fiber can be resumed, and aborts otherwise.
-  protected abstract def validate_resumable(fiber : Fiber) : Nil
 end

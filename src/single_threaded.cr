@@ -1,15 +1,23 @@
-abstract class ExecutionContext
-  class SingleThreaded < ExecutionContext
+module ExecutionContext
+  class SingleThreaded
+    include ExecutionContext
+    include Scheduler # TODO: extract a scheduler type (?)
+
     private getter! thread : Thread
     private getter! main_fiber : Fiber
     @deep_sleep_fiber : Fiber?
 
-    getter name : String?
+    getter name : String
     getter? idle : Bool = false
     getter event_loop : Crystal::EventLoop = Crystal::EventLoop.create
     getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
 
-    # TODO: consider Runnables(N) + GlobalQueue instead of SpinLock + Deque
+    # TODO: Replace the Lock+Deque with a simple bounded queue with overflow to
+    #       with overflow to a GlobalQueue where cross context spawns/enqueues
+    #       would also happen.
+    #
+    #       We could reuse Runnables but there won't be any stealing, so we can
+    #       spare the atomics over the local queue.
     @lock = Crystal::SpinLock.new
     @runnables = Deque(Fiber).new
     @fiber_channel = Crystal::FiberChannel.new
@@ -32,34 +40,44 @@ abstract class ExecutionContext
         wg.wait
       end
 
-      # self.spawn { stack_pool.collect_loop }
+      # self.spawn(name: "#{@name}:stackpool-collect") do
+      #   stack_pool.collect_loop
+      # end
     end
 
     # Setups the scheduler inside the current thread.
     # Spawns a fiber to run the scheduler loop.
     private def hijack_current_thread : Nil
       @thread = thread = Thread.current
+      Thread.name = @name
       thread.execution_context = self
-      @main_fiber = self.spawn(name: "#{@name}-main") { run_loop }
+      thread.current_scheduler = self
+      @main_fiber = self.spawn(name: "#{@name}:loop") { run_loop }
     end
 
     # Starts a thread to run the scheduler.
     # The thread's main fiber will run the scheduler loop.
     private def start_thread(&block : ->) : Nil
-      Thread.new do |thread|
+      Thread.new(name: @name) do |thread|
         @thread = thread
         thread.execution_context = self
+        thread.current_scheduler = self
+        thread.main_fiber.name = "#{@name}:main"
         @main_fiber = thread.main_fiber
-        # @main_fiber.name = "#{@name}-main"
         block.call
         run_loop
       end
     end
 
+    def execution_context : SingleThreaded
+      self
+    end
+
+    @[Deprecated("The same_thread argument to spawn is deprecated. Create execution contexts instead")]
     def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
       # whatever the value for same thread, fibers will always run on the same
       # thread anyway
-      super(name, &block)
+      self.spawn(name: name, &block)
     end
 
     def enqueue(fiber : Fiber) : Nil
@@ -171,7 +189,7 @@ abstract class ExecutionContext
     end
 
     private def deep_sleep_fiber : Fiber
-      @deep_sleep_fiber ||= Fiber.new(name: "#{@name}-sleep", execution_context: self) do
+      @deep_sleep_fiber ||= Fiber.new(name: "#{@name}:sleep", execution_context: self) do
         loop do
           resume @fiber_channel.receive
         end

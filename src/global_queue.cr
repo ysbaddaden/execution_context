@@ -1,7 +1,7 @@
 require "./queue"
 require "./runnables"
 
-abstract class ExecutionContext
+module ExecutionContext
   # Global queue of runnable fibers. Unbounded. Shared by all schedulers in an
   # execution context.
   #
