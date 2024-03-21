@@ -69,11 +69,13 @@ module ExecutionContext
       end
     end
 
+    @[AlwaysInline]
     def execution_context : SingleThreaded
       self
     end
 
     @[Deprecated("The same_thread argument to spawn is deprecated. Create execution contexts instead")]
+    @[AlwaysInline]
     def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
       # whatever the value for same thread, fibers will always run on the same
       # thread anyway

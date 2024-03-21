@@ -1,5 +1,6 @@
 module ExecutionContext
   module Scheduler
+    @[AlwaysInline]
     def self.current : Scheduler
       Thread.current.current_scheduler
     end
@@ -10,11 +11,13 @@ module ExecutionContext
     abstract def event_loop : Crystal::EventLoop
 
     # Instantiates a Fiber and enqueues it into the scheduler's local queue.
+    @[AlwaysInline]
     def spawn(*, name : String? = nil, &block : ->) : Fiber
       Fiber.new(name, execution_context, &block).tap { |fiber| enqueue(fiber) }
     end
 
     @[Deprecated]
+    @[AlwaysInline]
     abstract def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
 
     # Suspends the execution of the current fiber and resumes the next runnable

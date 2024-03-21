@@ -9,6 +9,7 @@ require "./multi_threaded"
 module ExecutionContext
   @@default : ExecutionContext?
 
+  @[AlwaysInline]
   def self.default : ExecutionContext
     @@default.not_nil!("expected default execution context to have been setup")
   end
@@ -27,6 +28,7 @@ module ExecutionContext
     ENV["CRYSTAL_WORKERS"]?.try(&.to_i?) || Math.min(System.cpu_count.to_i, 32)
   end
 
+  @[AlwaysInline]
   def self.current : ExecutionContext
     Thread.current.execution_context
   end
@@ -37,6 +39,7 @@ module ExecutionContext
   #
   # This method is safe as it only operates on the current ExecutionContext and
   # Scheduler.
+  @[AlwaysInline]
   def self.reschedule : Nil
     Scheduler.current.reschedule
   end
@@ -50,6 +53,7 @@ module ExecutionContext
   #
   # This method is safe as it only operates on the current ExecutionContext and
   # Scheduler.
+  @[AlwaysInline]
   def self.resume(fiber : Fiber) : Nil
     if fiber.execution_context == current
       Scheduler.current.resume(fiber)
@@ -62,6 +66,7 @@ module ExecutionContext
   # context.
   #
   # May be called from any ExecutionContext (i.e. must be thread-safe).
+  @[AlwaysInline]
   def spawn(*, name : String? = nil, &block : ->) : Fiber
     Fiber.new(name, self, &block).tap { |fiber| enqueue(fiber) }
   end
