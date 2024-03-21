@@ -12,6 +12,18 @@ class Thread
     main_fiber.execution_context = execution_context
   end
 
+  # :nodoc:
+  def dead_fiber=(@dead_fiber : Fiber) : Fiber
+  end
+
+  # :nodoc:
+  def dead_fiber? : Fiber?
+    if fiber = @dead_fiber
+      @dead_fiber = nil
+      fiber
+    end
+  end
+
   # the following methods set `@current_fiber` and are otherwise identical to crystal:master
 
   def initialize

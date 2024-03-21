@@ -32,12 +32,12 @@ class Fiber
   #   # @execution_context = ExecutionContext.current # <= infinite recursion
   # end
 
-  def resume : Nil
-    ExecutionContext.resume(self)
-  end
-
   def enqueue : Nil
     execution_context.enqueue(self)
+  end
+
+  def resume : Nil
+    ExecutionContext.resume(self)
   end
 
   # identical to master, but doesn't prematurely releases the stack _before_ we
@@ -48,6 +48,13 @@ class Fiber
   # :nodoc:
   def run
     GC.unlock_read
+
+    {% unless flag?(:interpreted) %}
+      if fiber = Thread.current.dead_fiber?
+        fiber.execution_context.stack_pool.release(fiber.@stack)
+      end
+    {% end %}
+
     @proc.call
   rescue ex
     io = {% if flag?(:preview_mt) %}

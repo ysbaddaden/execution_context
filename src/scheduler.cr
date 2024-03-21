@@ -17,10 +17,6 @@ module ExecutionContext
     @[Deprecated]
     abstract def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
 
-    {% unless flag?(:interpreted) %}
-      @dead_fiber : Fiber?
-    {% end %}
-
     # Suspends the execution of the current fiber and resumes the next runnable
     # fiber.
     #
@@ -49,23 +45,30 @@ module ExecutionContext
     # Unsafe. Must only be called on `ExecutionContext.current`. Caller must
     # ensure that the fiber indeed belongs to the current execution context.
     # Prefer `ExecutionContext.resume` instead.
+    #
+    # TODO: rename as `#swapcontext` and have a `#resume` that calls
+    #       `#validate_resumable` then `#swapcontext`.
+    # TODO: consider making it a class method (?)
     protected def resume(fiber : Fiber) : Nil
       validate_resumable(fiber)
 
+      GC.lock_read
       current_fiber = thread.current_fiber
       {% unless flag?(:interpreted) %}
-        @dead_fiber = current_fiber if current_fiber.dead?
+        thread.dead_fiber = current_fiber if current_fiber.dead?
       {% end %}
-
-      GC.lock_read
       thread.current_fiber = fiber
       Fiber.swapcontext(pointerof(current_fiber.@context), pointerof(fiber.@context))
       GC.unlock_read
 
+      # we switched context so we can't trust `self` anymore (it is the
+      # scheduler that rescheduled `fiber` which may be another scheduler) as
+      # well as any other local or instance variables (e.g. we must resolve
+      # `Thread.current` again)
+
       {% unless flag?(:interpreted) %}
-        if fiber = @dead_fiber
-          @dead_fiber = nil
-          execution_context.stack_pool.release(fiber.@stack)
+        if fiber = Thread.current.dead_fiber?
+          fiber.execution_context.stack_pool.release(fiber.@stack)
         end
       {% end %}
     end

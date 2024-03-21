@@ -35,11 +35,6 @@ module ExecutionContext
         @event_loop = Crystal::EventLoop.create
       end
 
-      # :nodoc:
-      def stack_pool : Fiber::StackPool
-        @execution_context.stack_pool
-      end
-
       @[Deprecated]
       def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
         raise RuntimeError.new("#{self.class.name}#spawn doesn't support same_thread:true") if same_thread
