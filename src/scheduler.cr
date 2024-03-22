@@ -16,7 +16,6 @@ module ExecutionContext
       Fiber.new(name, execution_context, &block).tap { |fiber| enqueue(fiber) }
     end
 
-    @[Deprecated]
     @[AlwaysInline]
     abstract def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
 

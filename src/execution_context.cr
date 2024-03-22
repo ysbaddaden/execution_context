@@ -73,7 +73,7 @@ module ExecutionContext
 
   # Legacy support for the `same_thread` argument. Each execution context may
   # decide to support it or not (e.g. SingleThreaded can accept it).
-  @[Deprecated]
+  @[Deprecated("The same_thread argument to spawn is deprecated. Create execution contexts instead")]
   abstract def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
 
   abstract def stack_pool : Fiber::StackPool

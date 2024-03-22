@@ -96,7 +96,7 @@ module ExecutionContext
       end
     end
 
-    @[Deprecated]
+    @[Deprecated("The same_thread argument to spawn is deprecated. Create execution contexts instead")]
     def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
       raise ArgumentError.new("#{self.class.name}#spawn doesn't support same_thread:true") if same_thread
       self.spawn(name: name, &block)
