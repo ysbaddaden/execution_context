@@ -77,7 +77,7 @@ module ExecutionContext
       thread.current_scheduler = scheduler
       scheduler.thread = thread
 
-      scheduler.main_fiber = scheduler.spawn(name: "#{@name}-#{index}:loop") do
+      scheduler.main_fiber = Fiber.new("#{@name}-#{index}:loop", self) do
         scheduler.run_loop
       end
 
