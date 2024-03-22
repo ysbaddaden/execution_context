@@ -106,6 +106,25 @@ module ExecutionContext
       end
     end
 
+    protected def resume(fiber : Fiber) : Nil
+      # NOTE: when we start sending fibers between contexts, then we must loop
+      #       on Fiber#resumable? because thread B may try to resume the fiber
+      #       before thread A saved its context!
+      unless fiber.resumable?
+        message =
+          if fiber.dead?
+            "FATAL: tried to resume a dead fiber %s (%s)"
+          else
+            "FATAL: can't resume a running fiber %s (%s)"
+          end
+        Crystal::System.print_error_buffered(
+          message, fiber.to_s, inspect, backtrace: caller)
+        exit 1
+      end
+
+      swapcontext(fiber)
+    end
+
     # Dequeues one fiber from the runnable queue.
     # Fallbacks to run the event queue (nonblocking).
     protected def dequeue? : Fiber?
@@ -119,30 +138,6 @@ module ExecutionContext
           return fiber
         end
       end
-    end
-
-    protected def resume(fiber : Fiber) : Nil
-      unless fiber.resumable?
-        message = String.build do |str|
-          str << "\nFATAL: "
-          if fiber.dead?
-            str << "tried to resume a dead fiber"
-          else
-            str << "can't resume a running fiber"
-          end
-          str << ": "
-          fiber.to_s(str)
-          str << ' '
-          inspect(str)
-          str << '\n'
-          caller.each { |line| str << "  from " << line << '\n' }
-        end
-
-        Crystal::System.print_error(message)
-        exit 1
-      end
-
-      swapcontext(fiber)
     end
 
     protected def run_loop : Nil

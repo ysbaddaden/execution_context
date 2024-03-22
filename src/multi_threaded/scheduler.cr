@@ -67,14 +67,9 @@ module ExecutionContext
         # the fiber as resumable.
         until fiber.resumable?
           if fiber.dead?
-            message = String.build do |str|
-              str << "\nFATAL: tried to resume a dead fiber: "
-              fiber.to_s(str)
-              str << '\n'
-              caller.each { |line| str << "  from " << line << '\n' }
-            end
-
-            Crystal::System.print_error(message)
+            Crystal::System.print_error_buffered(
+              "FATAL: tried to resume a dead fiber %s (%s)",
+              fiber.to_s, inspect, backtrace: caller)
             exit 1
           end
 
@@ -179,11 +174,10 @@ module ExecutionContext
 
           @idle = false
         rescue exception
-          message = String.build do |str|
-            str << "BUG: " << self.class.name << "#run_loop crashed with " << exception.class.name << '\n'
-            exception.backtrace.each { |line| str << "  from " << line << '\n' }
-          end
-          Crystal::System.print_error(message)
+          Crystal::System.print_error_buffered(
+            "BUG: %s#run_loop crashed with %s (%s)",
+            self.class.name, exception.message, exception.class.name,
+            backtrace: exception.backtrace)
         end
       end
 
