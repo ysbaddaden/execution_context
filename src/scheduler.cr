@@ -5,6 +5,7 @@ module ExecutionContext
       Thread.current.current_scheduler
     end
 
+    abstract def thread : Thread
     abstract def execution_context : ExecutionContext
 
     # TODO: move to ExecutionContext
