@@ -46,11 +46,13 @@ module ExecutionContext
       # case, since cross context enqueues will call EC::MT#enqueue through
       # Fiber#enqueue).
       protected def enqueue(fiber : Fiber) : Nil
+        Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
         @runnables.push(fiber)
         @execution_context.unpark_idle_thread unless @runnables.empty?
       end
 
       protected def reschedule : Nil
+        Crystal.trace "sched:reschedule"
         if fiber = dequeue?
           resume fiber unless fiber == thread.current_fiber
         else
@@ -60,6 +62,8 @@ module ExecutionContext
       end
 
       protected def resume(fiber : Fiber) : Nil
+        Crystal.trace "sched:resume fiber=%p [%s]", fiber.as(Void*), fiber.name
+
         # in a multithreaded environment the fiber may be dequeued before its
         # running context has been saved on the stack (thread A tries to resume
         # fiber that thread B didn't yet saved its context); we must wait until
@@ -130,6 +134,7 @@ module ExecutionContext
           end
 
           if fiber = @runnables.steal_from(other.@runnables)
+            Crystal.trace "sched:stolen from=%p [%s]", other.as(Void*), other.name
             return fiber
           end
         end

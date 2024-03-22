@@ -14,7 +14,10 @@ module ExecutionContext
     # Instantiates a Fiber and enqueues it into the scheduler's local queue.
     @[AlwaysInline]
     def spawn(*, name : String? = nil, &block : ->) : Fiber
-      Fiber.new(name, execution_context, &block).tap { |fiber| enqueue(fiber) }
+      Fiber.new(name, execution_context, &block).tap do |fiber|
+        # Crystal.trace "sched:spawn %p", fiber.as(Void*)
+        enqueue(fiber)
+      end
     end
 
     @[AlwaysInline]

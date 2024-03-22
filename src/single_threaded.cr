@@ -83,6 +83,7 @@ module ExecutionContext
     end
 
     def enqueue(fiber : Fiber) : Nil
+      Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
       @lock.lock
 
       if @idle
@@ -98,6 +99,8 @@ module ExecutionContext
     end
 
     protected def reschedule : Nil
+      Crystal.trace "sched:reschedule"
+
       if fiber = dequeue?
         resume fiber unless fiber == thread.current_fiber
       else
@@ -107,6 +110,8 @@ module ExecutionContext
     end
 
     protected def resume(fiber : Fiber) : Nil
+      Crystal.trace "sched:resume fiber=%p [%s]", fiber.as(Void*), fiber.name
+
       # NOTE: when we start sending fibers between contexts, then we must loop
       #       on Fiber#resumable? because thread B may try to resume the fiber
       #       before thread A saved its context!
@@ -182,7 +187,10 @@ module ExecutionContext
     private def deep_sleep_fiber : Fiber
       @deep_sleep_fiber ||= Fiber.new("#{@name}:sleep", self) do
         loop do
-          resume @fiber_channel.receive
+          Crystal.trace "sched:parking"
+          fiber = @fiber_channel.receive
+          Crystal.trace "sched:wakeup"
+          resume fiber
         end
       end
     end

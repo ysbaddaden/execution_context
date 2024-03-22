@@ -150,9 +150,11 @@ module ExecutionContext
         #   return fiber
         # end
 
+        Crystal.trace "sched:parking"
         @parked += 1
         @condition.wait(@mutex)
         @parked -= 1
+        Crystal.trace "sched:wakeup"
       end
 
       nil
