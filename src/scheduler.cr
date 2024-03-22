@@ -40,25 +40,27 @@ module ExecutionContext
     # The current fiber will never be resumed; you're responsible to reenqueue
     # it.
     #
+    # Unsafe. Must only be called on `ExecutionContext.current`. Prefer
+    # `ExecutionContext.resume` instead.
+    protected abstract def resume(fiber : Fiber) : Nil
+
+    # Switches the thread from running the current fiber to run `fiber` instead.
+    #
     # Handles thread safety around fiber stacks: locks the GC to not start a
     # collection while we're switching context, releases the stack of a dead
-    # fiber; as well as validating that `fiber` can indeed be resumed.
+    # fiber.
     #
-    # Unsafe. Must only be called on `ExecutionContext.current`. Caller must
-    # ensure that the fiber indeed belongs to the current execution context.
-    # Prefer `ExecutionContext.resume` instead.
-    #
-    # TODO: rename as `#swapcontext` and have a `#resume` that calls
-    #       `#validate_resumable` then `#swapcontext`.
-    # TODO: consider making it a class method (?)
-    protected def resume(fiber : Fiber) : Nil
-      validate_resumable(fiber)
-
-      GC.lock_read
+    # Unsafe. Must only be called by the current scheduler. Caller must ensure
+    # that the fiber indeed belongs to the current execution context, and that
+    # the fiber can indeed be resumed.
+    protected def swapcontext(fiber : Fiber) : Nil
       current_fiber = thread.current_fiber
+
       {% unless flag?(:interpreted) %}
         thread.dead_fiber = current_fiber if current_fiber.dead?
       {% end %}
+
+      GC.lock_read
       thread.current_fiber = fiber
       Fiber.swapcontext(pointerof(current_fiber.@context), pointerof(fiber.@context))
       GC.unlock_read
@@ -74,9 +76,5 @@ module ExecutionContext
         end
       {% end %}
     end
-
-    # Validates that the current fiber can be resumed (e.g. not dead, has saved
-    # its context), and aborts the process otherwise.
-    private abstract def validate_resumable(fiber : Fiber) : Nil
   end
 end

@@ -121,26 +121,28 @@ module ExecutionContext
       end
     end
 
-    private def validate_resumable(fiber : Fiber) : Nil
-      return if fiber.resumable?
-
-      message = String.build do |str|
-        str << "\nFATAL: "
-        if fiber.dead?
-          str << "tried to resume a dead fiber"
-        else
-          str << "can't resume a running fiber"
+    protected def resume(fiber : Fiber) : Nil
+      unless fiber.resumable?
+        message = String.build do |str|
+          str << "\nFATAL: "
+          if fiber.dead?
+            str << "tried to resume a dead fiber"
+          else
+            str << "can't resume a running fiber"
+          end
+          str << ": "
+          fiber.to_s(str)
+          str << ' '
+          inspect(str)
+          str << '\n'
+          caller.each { |line| str << "  from " << line << '\n' }
         end
-        str << ": "
-        fiber.to_s(str)
-        str << ' '
-        inspect(str)
-        str << '\n'
-        caller.each { |line| str << "  from " << line << '\n' }
+
+        Crystal::System.print_error(message)
+        exit 1
       end
 
-      Crystal::System.print_error(message)
-      exit 1
+      swapcontext(fiber)
     end
 
     protected def run_loop : Nil

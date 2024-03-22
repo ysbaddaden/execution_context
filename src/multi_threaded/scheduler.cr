@@ -59,11 +59,12 @@ module ExecutionContext
         end
       end
 
-      # In a multithreaded environment the fiber may be dequeued before its
-      # running context has been saved on the stack; we must wait until the
-      # context switch assembly saved all registers on the stack and set the
-      # fiber as resumable.
-      private def validate_resumable(fiber : Fiber) : Nil
+      protected def resume(fiber : Fiber) : Nil
+        # in a multithreaded environment the fiber may be dequeued before its
+        # running context has been saved on the stack (thread A tries to resume
+        # fiber that thread B didn't yet saved its context); we must wait until
+        # the context switch assembly saved all registers on the stack and set
+        # the fiber as resumable.
         until fiber.resumable?
           if fiber.dead?
             message = String.build do |str|
@@ -82,6 +83,8 @@ module ExecutionContext
           #        shall we abort and reenqueue the fiber after MAX iterations?
           Intrinsics.pause
         end
+
+        swapcontext(fiber)
       end
 
       @[AlwaysInline]
