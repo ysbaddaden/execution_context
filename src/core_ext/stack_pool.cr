@@ -19,7 +19,7 @@ class Fiber::StackPool
 
   def checkout : {Void*, Void*}
     stack = @lock.sync { @deque.pop? } ||
-      Crystal::System::Fiber.allocate_stack(STACK_SIZE)
+            Crystal::System::Fiber.allocate_stack(STACK_SIZE)
     {stack, stack + STACK_SIZE}
   end
 
