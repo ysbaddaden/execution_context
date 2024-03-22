@@ -173,12 +173,9 @@ module ExecutionContext
         # the extra fiber to create a wait event in the event loop, leading the
         # thread to resume the main loop, eventually waiting on the even loop.
         resume deep_sleep_fiber
-      rescue exception
-        message = String.build do |str|
-          str << "BUG: " << self.class.name << "#run_loop crashed with " << exception.class.name << '\n'
-          exception.backtrace.each { |line| str << "  from " << line << '\n' }
-        end
-        Crystal::System.print_error(message)
+      rescue ex
+        message = "BUG: %s#run_loop crashed with %s"
+        Crystal::System.print_error_buffered(message, self.class.name, ex.class.name, backtrace: ex.backtrace)
       end
     end
 
