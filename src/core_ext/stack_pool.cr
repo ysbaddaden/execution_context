@@ -18,8 +18,8 @@ class Fiber::StackPool
   end
 
   def checkout : {Void*, Void*}
-    stack = @lock.sync { @deque.pop? } ||
-            Crystal::System::Fiber.allocate_stack(STACK_SIZE)
+    stack = @lock.sync { @deque.pop? } if @deque.size > 0
+    stack ||= Crystal::System::Fiber.allocate_stack(STACK_SIZE, @protect)
     {stack, stack + STACK_SIZE}
   end
 
