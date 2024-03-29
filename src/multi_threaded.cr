@@ -38,6 +38,9 @@ module ExecutionContext
       @condition = Thread::ConditionVariable.new
       @parked = 0
 
+      @blocked_lock = Crystal::SpinLock.new
+      @blocked = Deque(Scheduler).new(@size)
+
       start_schedulers(@size, hijack)
 
       # self.spawn(name: "#{@name}:stackpool-collect") do
@@ -109,7 +112,7 @@ module ExecutionContext
       else
         # cross context: push to global queue
         @global_queue.push(fiber)
-        unpark_idle_thread
+        notify_idle_scheduler
       end
     end
 
@@ -126,8 +129,9 @@ module ExecutionContext
         i = @rng.next_int
 
         @size.times do |j|
-          scheduler = @schedulers[(i + j) % @size]
-          yield scheduler unless scheduler.idle?
+          if scheduler = @schedulers[(i &+ j) % @size]?
+            yield scheduler unless scheduler.idle?
+          end
         end
 
         # back-off
@@ -139,16 +143,16 @@ module ExecutionContext
     protected def park_thread(scheduler : Scheduler) : Fiber?
       @mutex.synchronize do
         # by the time we acquired the lock, another thread may have enqueued
-        # fiber(s) and already tried to wakup a thread (race). we don't check
+        # fiber(s) and already tried to wakeup a thread (race). we don't check
         # the scheduler's local queue nor it's event loop (both are empty)
 
         if fiber = scheduler.global_dequeue?
           return fiber
         end
 
-        # if fiber = scheduler.try_steal?
-        #   return fiber
-        # end
+        if fiber = scheduler.try_steal?
+          return fiber
+        end
 
         Crystal.trace "sched:parking"
         @parked += 1
@@ -165,16 +169,36 @@ module ExecutionContext
     #           many fibers are queued and for how long they have been waiting
     #           in queue
     @[AlwaysInline]
-    protected def unpark_idle_thread : Nil
+    protected def notify_idle_scheduler : Nil
+      return if @size == 1
+
+      # TODO: return if any scheduler is spinning
+
+      unless @blocked.empty?
+        if scheduler = @blocked_lock.sync { @blocked.pop? }
+          scheduler.unblock
+          return
+        end
+      end
+
       return if @parked == 0
 
       # OPTIMIZE: use trylock and return if we couldn't lock the mutex so we don't
-      #           block the current thread!
+      #           block the current thread trying to wakeup another one
       @mutex.synchronize do
         return if @parked == 0
 
         @condition.signal
       end
+    end
+
+    @[AlwaysInline]
+    protected def blocked(scheduler : Scheduler, & : -> F) forall F
+      @blocked_lock.sync { @blocked.push(scheduler) }
+      yield
+    ensure
+      # OPTIMIZE: skip if we called Scheduler#unblock (already pop)
+      @blocked_lock.sync { @blocked.delete(scheduler) }
     end
 
     @[AlwaysInline]

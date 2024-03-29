@@ -48,7 +48,7 @@ module ExecutionContext
       protected def enqueue(fiber : Fiber) : Nil
         Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
         @runnables.push(fiber)
-        @execution_context.unpark_idle_thread unless @runnables.empty?
+        @execution_context.notify_idle_scheduler unless @runnables.empty?
       end
 
       protected def reschedule : Nil
@@ -106,14 +106,15 @@ module ExecutionContext
           return fiber
         end
 
-        # poll the event loop
+        # poll the event loop for any activable events, but don't wait for
+        # events to become activable
         if @event_loop.run(blocking: false)
           if fiber = @runnables.get?
             return fiber
           end
         end
 
-        # steal from another scheduler (if possible)
+        # try to steal from another scheduler
         if fiber = try_steal?
           return fiber
         end
@@ -140,6 +141,9 @@ module ExecutionContext
         end
       end
 
+      # OPTIMIZE: spin and sleep with an increasing back-off instead of
+      #           parking the thread immediately to try and avoid
+      #           consecutive park <-> wakeup loops
       protected def run_loop : Nil
         loop do
           # the queue should usually be empty at this point (but just in case)
@@ -155,22 +159,24 @@ module ExecutionContext
 
           @idle = true
 
-          # block on the event loop, waiting for pending event(s) to activate
-          if @event_loop.run(blocking: true)
-            if fiber = @runnables.get?
-              @idle = false
-              resume fiber
-              next
-            end
+          # try to steal before blocking on the event loop
+          if fiber = try_steal?
+            @idle = false
+            resume fiber
+            next
           end
 
-          # no runnable fiber, no pending event in the local event loop: go into
-          # deep sleep until another scheduler or another context enqueues a
-          # fiber
-          #
-          # OPTIMIZE: spin and sleep with an increasing back-off instead of
-          #           parking the thread immediately to try and avoid
-          #           consecutive park <-> wakeup loops
+          # block on the event loop, waiting for pending event(s) to activate
+          Crystal.trace "sched:event_loop run(blocking)"
+
+          if @execution_context.blocked(self) { @event_loop.run(blocking: true) }
+            # the event loop enqueud a fiber or was interrupted: restart
+            @idle = false
+            next
+          end
+
+          # no runnable fiber, no event in the local event loop: go into deep
+          # sleep until another scheduler or another context enqueues a fiber
           if fiber = @execution_context.park_thread(self)
             @idle = false
             resume fiber
@@ -184,6 +190,12 @@ module ExecutionContext
             self.class.name, exception.message, exception.class.name,
             backtrace: exception.backtrace)
         end
+      end
+
+      @[AlwaysInline]
+      protected def unblock : Nil
+        Crystal.trace "sched:unblock scheduler=%p [%s]", self.as(Void*), name
+        @event_loop.interrupt_loop
       end
 
       @[AlwaysInline]
