@@ -68,7 +68,7 @@ module ExecutionContext
     # `divisor` is meant for fair distribution of fibers across threads in the
     # execution context; it should be the number of threads.
     def grab?(runnables, divisor : Int32) : Fiber?
-      lock { unsafe_grab?(runnables, divisor) }
+      lock { unsafe_grab?(runnables, divisor) } unless @size == 0
     end
 
     # Try to grab a batch of fibers from the global runnable queue. Returns the
