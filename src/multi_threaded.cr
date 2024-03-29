@@ -38,7 +38,7 @@ module ExecutionContext
       @parked = 0
 
       @blocked_lock = Crystal::SpinLock.new
-      @blocked = Deque(Scheduler).new(@size)
+      @blocked = Crystal::PointerLinkedList(Scheduler::Blocked).new
 
       start_schedulers(@size, hijack)
 
@@ -143,7 +143,7 @@ module ExecutionContext
       @mutex.synchronize do
         # by the time we acquired the lock, another thread may have enqueued
         # fiber(s) and already tried to wakeup a thread (race). we don't check
-        # the scheduler's local queue nor it's event loop (both are empty)
+        # the scheduler's local queue nor its event loop (both are empty)
 
         if fiber = scheduler.global_dequeue?
           return fiber
@@ -172,12 +172,13 @@ module ExecutionContext
       return if @size == 1
 
       # TODO: return if any scheduler is spinning
+      # return if @spinning.get(:relaxed) != 0
 
       unless @blocked.empty?
-        if scheduler = @blocked_lock.sync { @blocked.pop? }
-          scheduler.unblock
-          return
+        if blocked = @blocked_lock.sync { @blocked.shift? }
+          blocked.value.unblock
         end
+        return
       end
 
       return if @parked == 0
@@ -192,12 +193,13 @@ module ExecutionContext
     end
 
     @[AlwaysInline]
-    protected def blocked(scheduler : Scheduler, & : -> F) forall F
-      @blocked_lock.sync { @blocked.push(scheduler) }
-      yield
-    ensure
-      # OPTIMIZE: skip if we called Scheduler#unblock (already pop)
-      @blocked_lock.sync { @blocked.delete(scheduler) }
+    protected def blocked(blocked : Pointer(Scheduler::Blocked)) : Nil
+      @blocked_lock.sync { @blocked.push(blocked) }
+    end
+
+    @[AlwaysInline]
+    protected def unblocked(blocked : Pointer(Scheduler::Blocked)) : Nil
+      @blocked_lock.sync { @blocked.delete(blocked) }
     end
 
     @[AlwaysInline]

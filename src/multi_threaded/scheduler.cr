@@ -1,3 +1,4 @@
+require "crystal/pointer_linked_list"
 require "../runnables"
 
 module ExecutionContext
@@ -14,6 +15,35 @@ module ExecutionContext
     # TODO: cooperative shutdown (e.g. when shrinking number of schedulers)
     class Scheduler
       include ExecutionContext::Scheduler
+
+      struct Blocked
+        include Crystal::PointerLinkedList::Node
+
+        def initialize(@scheduler : Scheduler)
+        end
+
+        @flag = Atomic(Int32).new(0)
+
+        @[AlwaysInline]
+        def set : Nil
+          @flag.set(1, :relaxed)
+        end
+
+        @[AlwaysInline]
+        def set? : Bool
+          @flag.get(:relaxed) == 1
+        end
+
+        @[AlwaysInline]
+        def trigger? : Bool
+          @flag.swap(0, :relaxed) == 1
+        end
+
+        @[AlwaysInline]
+        def unblock : Nil
+          @scheduler.unblock if trigger?
+        end
+      end
 
       protected property execution_context : MultiThreaded
       protected property! thread : Thread
@@ -33,6 +63,8 @@ module ExecutionContext
       protected def initialize(@execution_context, @name)
         @runnables = Runnables(256).new(@execution_context.global_queue)
         @event_loop = Crystal::EventLoop.create
+        @blocked = uninitialized Blocked
+        @blocked = Blocked.new(self)
       end
 
       # :nodoc:
@@ -48,7 +80,10 @@ module ExecutionContext
       protected def enqueue(fiber : Fiber) : Nil
         Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
         @runnables.push(fiber)
-        @execution_context.notify_idle_scheduler unless @runnables.empty?
+
+        unless @runnables.empty? || @blocked.set?
+          @execution_context.notify_idle_scheduler
+        end
       end
 
       protected def reschedule : Nil
@@ -169,7 +204,7 @@ module ExecutionContext
           # block on the event loop, waiting for pending event(s) to activate
           Crystal.trace "sched:event_loop run(blocking)"
 
-          if @execution_context.blocked(self) { @event_loop.run(blocking: true) }
+          if blocking { @event_loop.run(blocking: true) }
             # the event loop enqueud a fiber or was interrupted: restart
             @idle = false
             next
@@ -189,6 +224,18 @@ module ExecutionContext
             "BUG: %s#run_loop crashed with %s (%s)",
             self.class.name, exception.message, exception.class.name,
             backtrace: exception.backtrace)
+        end
+      end
+
+      @[AlwaysInline]
+      private def blocking(&)
+        @blocked.set
+        @execution_context.blocked(pointerof(@blocked))
+
+        begin
+          yield
+        ensure
+          @execution_context.unblocked(pointerof(@blocked)) if @blocked.trigger?
         end
       end
 
