@@ -13,7 +13,6 @@ module ExecutionContext
 
     getter name : String
     getter size : Int32
-    getter? idle : Bool = false
     getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
     protected getter global_queue : GlobalQueue
 
@@ -26,7 +25,7 @@ module ExecutionContext
       new(name, size, hijack: false)
     end
 
-    protected def initialize(@name : String, @size = 1, hijack = false)
+    protected def initialize(@name : String, @size : Int32, hijack = false)
       raise "ERROR: needs at least one thread" if @size <= 0
 
       @global_queue = GlobalQueue.new

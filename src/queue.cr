@@ -31,7 +31,7 @@ module ExecutionContext
 
     @[AlwaysInline]
     def pop : Fiber
-      pop { raise IndexError.new }
+      pop { raise IndexError.new("ERROR: empty Queue") }
     end
 
     @[AlwaysInline]
