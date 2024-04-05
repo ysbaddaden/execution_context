@@ -36,9 +36,10 @@ module ExecutionContext
       @mutex = Thread::Mutex.new
       @condition = Thread::ConditionVariable.new
       @parked = 0
+      @spinning = Atomic(Int32).new(0)
 
       @blocked_lock = Crystal::SpinLock.new
-      @blocked = Crystal::PointerLinkedList(Scheduler::Blocked).new
+      @blocked_list = Crystal::PointerLinkedList(Scheduler::Blocked).new
 
       start_schedulers(@size, hijack)
 
@@ -111,7 +112,7 @@ module ExecutionContext
       else
         # cross context: push to global queue
         @global_queue.push(fiber)
-        notify_idle_scheduler
+        wake_scheduler
       end
     end
 
@@ -123,33 +124,19 @@ module ExecutionContext
     protected def steal(&) : Nil
       return if @size == 1
 
-      # try to steal a few times
-      1.upto(4) do |iter|
-        i = @rng.next_int
+      i = @rng.next_int
 
-        @size.times do |j|
-          if scheduler = @schedulers[(i &+ j) % @size]?
-            yield scheduler unless scheduler.idle?
-          end
+      @size.times do |j|
+        if scheduler = @schedulers[(i &+ j) % @size]?
+          yield scheduler unless scheduler.idle?
         end
-
-        # back-off
-        iter.times { Intrinsics.pause }
       end
     end
 
-    @[AlwaysInline]
-    protected def park_thread(scheduler : Scheduler) : Fiber?
+    protected def park_thread : Fiber?
       @mutex.synchronize do
-        # by the time we acquired the lock, another thread may have enqueued
-        # fiber(s) and already tried to wakeup a thread (race). we don't check
-        # the scheduler's local queue nor its event loop (both are empty)
-
-        if fiber = scheduler.global_dequeue?
-          return fiber
-        end
-
-        if fiber = scheduler.try_steal?
+        # avoid races by checking queues again
+        if fiber = yield
           return fiber
         end
 
@@ -163,19 +150,12 @@ module ExecutionContext
       nil
     end
 
-    # OPTIMIZE: there must be better heuristics than always waking up one parked
-    #           thread, for example skip when there are spinning threads, how
-    #           many fibers are queued and for how long they have been waiting
-    #           in queue
-    @[AlwaysInline]
-    protected def notify_idle_scheduler : Nil
+    protected def wake_scheduler : Nil
       return if @size == 1
+      return if @spinning.get(:relaxed) != 0
 
-      # TODO: return if any scheduler is spinning
-      # return if @spinning.get(:relaxed) != 0
-
-      unless @blocked.empty?
-        if blocked = @blocked_lock.sync { @blocked.shift? }
+      unless @blocked_list.empty?
+        if blocked = @blocked_lock.sync { @blocked_list.shift? }
           blocked.value.unblock
         end
         return
@@ -184,7 +164,7 @@ module ExecutionContext
       return if @parked == 0
 
       # OPTIMIZE: use trylock and return if we couldn't lock the mutex so we don't
-      #           block the current thread trying to wakeup another one
+      #           block the current thread trying to wakeup another one (?)
       @mutex.synchronize do
         return if @parked == 0
 
@@ -193,13 +173,15 @@ module ExecutionContext
     end
 
     @[AlwaysInline]
-    protected def blocked(blocked : Pointer(Scheduler::Blocked)) : Nil
-      @blocked_lock.sync { @blocked.push(blocked) }
+    protected def blocking_start(blocked : Pointer(Scheduler::Blocked)) : Nil
+      blocked.value.set!
+      @blocked_lock.sync { @blocked_list.push(blocked) }
     end
 
     @[AlwaysInline]
-    protected def unblocked(blocked : Pointer(Scheduler::Blocked)) : Nil
-      @blocked_lock.sync { @blocked.delete(blocked) }
+    protected def blocking_stop(blocked : Pointer(Scheduler::Blocked)) : Nil
+      return unless blocked.value.trigger?
+      @blocked_lock.sync { @blocked_list.delete(blocked) }
     end
 
     @[AlwaysInline]
