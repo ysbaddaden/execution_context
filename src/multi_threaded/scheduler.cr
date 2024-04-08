@@ -16,6 +16,7 @@ module ExecutionContext
     class Scheduler
       include ExecutionContext::Scheduler
 
+      # :nodoc:
       struct Blocked
         include Crystal::PointerLinkedList::Node
 
@@ -30,18 +31,22 @@ module ExecutionContext
         end
 
         @[AlwaysInline]
-        def set? : Bool
-          @flag.get(:relaxed) == 1
-        end
-
-        @[AlwaysInline]
         def trigger? : Bool
           @flag.swap(0, :relaxed) == 1
         end
 
         @[AlwaysInline]
         def unblock : Nil
-          @scheduler.unblock if trigger?
+          # always trigger the atomic (to avoid a useless #delete in #blocking)
+          return unless trigger?
+
+          # don't interrupt the event loop for local enqueues: that's the EL
+          # that enqueues runnable fibers!
+          return if @scheduler == ExecutionContext::Scheduler.current
+
+          # another scheduler enqueued something, interrupt the blocking EL to
+          # resume spinning
+          @scheduler.unblock
         end
       end
 
@@ -55,10 +60,9 @@ module ExecutionContext
       # TODO: should eventually have one EL per EC
       getter event_loop : Crystal::EventLoop
 
-      property? idle : Bool = false
-
       @tick : Int32 = 0
-      @name : String
+      getter? idle : Bool = false
+      getter? spinning : Bool = false
 
       protected def initialize(@execution_context, @name)
         @runnables = Runnables(256).new(@execution_context.global_queue)
@@ -80,18 +84,15 @@ module ExecutionContext
       protected def enqueue(fiber : Fiber) : Nil
         Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
         @runnables.push(fiber)
-
-        unless @runnables.empty? || @blocked.set?
-          @execution_context.notify_idle_scheduler
-        end
+        @execution_context.wake_scheduler
       end
 
       protected def reschedule : Nil
         Crystal.trace "sched:reschedule"
-        if fiber = dequeue?
+        if fiber = quick_dequeue?
           resume fiber unless fiber == thread.current_fiber
         else
-          # nothing to do: switch back to the main loop
+          # nothing to do: switch back to the main loop to spin/park
           resume main_fiber
         end
       end
@@ -122,7 +123,7 @@ module ExecutionContext
       end
 
       @[AlwaysInline]
-      private def dequeue? : Fiber?
+      private def quick_dequeue? : Fiber?
         # every once in a while: dequeue from global queue to avoid two fibers
         # constantly respawing each other to completely occupy the local queue
         if (@tick &+= 1) % 61 == 0
@@ -136,34 +137,25 @@ module ExecutionContext
           return fiber
         end
 
+        # OPTIMIZE: the following may block the current fiber for a while (e.g.
+        #           lock on GQ, or processing lots of EL events) consider only
+        #           doing so in the scheduler's main fiber only to avoid
+        #           blocking the current fiber for too long
+
         # grab from global queue (tries to refill local queue)
-        if fiber = global_dequeue?
-          return fiber
-        end
-
-        # poll the event loop for any activable events, but don't wait for
-        # events to become activable
-        if @event_loop.run(blocking: false)
-          if fiber = @runnables.get?
-            return fiber
-          end
-        end
-
-        # try to steal from another scheduler
-        if fiber = try_steal?
-          return fiber
-        end
+        # if fiber = global_dequeue?
+        #   return fiber
+        # end
       end
 
       @[AlwaysInline]
-      protected def global_dequeue? : Fiber?
+      private def global_dequeue? : Fiber?
         if fiber = @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
           fiber
         end
       end
 
-      @[AlwaysInline]
-      protected def try_steal? : Fiber?
+      private def try_steal? : Fiber?
         @execution_context.steal do |other|
           if other == self
             next
@@ -176,49 +168,51 @@ module ExecutionContext
         end
       end
 
-      # OPTIMIZE: spin and sleep with an increasing back-off instead of
-      #           parking the thread immediately to try and avoid
-      #           consecutive park <-> wakeup loops
       protected def run_loop : Nil
         loop do
-          # the queue should usually be empty at this point (but just in case)
-          if fiber = @runnables.get?
-            resume fiber
-            next
-          end
-
-          if fiber = global_dequeue?
-            resume fiber
-            next
-          end
-
           @idle = true
 
-          # try to steal before blocking on the event loop
-          if fiber = try_steal?
-            @idle = false
-            resume fiber
-            next
+          runnable { @runnables.get? }
+          runnable { global_dequeue? }
+
+          if @event_loop.run(blocking: false)
+            runnable { @runnables.get? }
+          end
+
+          # nothing to do: start spinning
+          spinning do
+            runnable { try_steal? }
+
+            if @event_loop.run(blocking: false)
+              runnable { @runnables.get? }
+            end
+
+            runnable { global_dequeue? }
           end
 
           # block on the event loop, waiting for pending event(s) to activate
-          Crystal.trace "sched:event_loop run(blocking)"
-
           if blocking { @event_loop.run(blocking: true) }
             # the event loop enqueud a fiber or was interrupted: restart
-            @idle = false
             next
           end
 
           # no runnable fiber, no event in the local event loop: go into deep
           # sleep until another scheduler or another context enqueues a fiber
-          if fiber = @execution_context.park_thread(self)
-            @idle = false
-            resume fiber
-            next
-          end
+          runnable do
+            @execution_context.park_thread do
+              # by the time we acquired the lock, another thread may have
+              # enqueued fiber(s) and already tried to wakeup a thread (race).
+              # we don't check the scheduler's local queue nor its event loop
+              # (both are empty)
+              if fiber = global_dequeue?
+                break fiber
+              end
 
-          @idle = false
+              if fiber = try_steal?
+                break fiber
+              end
+            end
+          end
         rescue exception
           Crystal::System.print_error_buffered(
             "BUG: %s#run_loop crashed with %s (%s)",
@@ -227,21 +221,64 @@ module ExecutionContext
         end
       end
 
-      @[AlwaysInline]
-      private def blocking(&)
-        @blocked.set
-        @execution_context.blocked(pointerof(@blocked))
-
-        begin
-          yield
-        ensure
-          @execution_context.unblocked(pointerof(@blocked)) if @blocked.trigger?
+      private macro runnable(&)
+        if %fiber = {{yield}}
+          spin_stop if @spinning
+          @idle = false
+          resume %fiber
+          next
         end
       end
 
+      private def spinning(&)
+        # we could avoid spinning with MT:1 but another context could try to
+        # enqueue... maybe keep a counter of execution contexts?
+        # return if @execution_context.size == 1
+        spin_start
+
+        4.times do |iter|
+          yield
+          spin_backoff(iter)
+        end
+
+        spin_stop
+      end
+
       @[AlwaysInline]
+      private def spin_start
+        @spinning = true
+        @execution_context.@spinning.add(1, :acquire_release)
+      end
+
+      @[AlwaysInline]
+      private def spin_stop
+        @spinning = false
+        @execution_context.@spinning.sub(1, :acquire_release)
+      end
+
+      @[AlwaysInline]
+      private def spin_backoff(iter)
+        # OPTIMIZE: consider exponential backoff, but beware of edge cases, like
+        # creating latency before we notice a cross context enqueue, for example)
+        Thread.yield
+      end
+
+      @[AlwaysInline]
+      private def blocking(&)
+        # we could avoid the blocked list with MT:1 but another context could
+        # try to enqueue... maybe keep a counter of execution contexts?
+        # return yield if @execution_context.size == 1
+
+        @execution_context.blocking_start(pointerof(@blocked))
+        begin
+          yield
+        ensure
+          @execution_context.blocking_stop(pointerof(@blocked))
+        end
+      end
+
       protected def unblock : Nil
-        Crystal.trace "sched:unblock scheduler=%p [%s]", self.as(Void*), name
+        # Crystal.trace "sched:unblock scheduler=%p [%s]", self.as(Void*), name
         @event_loop.interrupt_loop
       end
 
