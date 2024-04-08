@@ -231,6 +231,9 @@ module ExecutionContext
       end
 
       private def spinning(&)
+        # we could avoid spinning with MT:1 but another context could try to
+        # enqueue... maybe keep a counter of execution contexts?
+        # return if @execution_context.size == 1
         spin_start
 
         4.times do |iter|
@@ -244,22 +247,28 @@ module ExecutionContext
       @[AlwaysInline]
       private def spin_start
         @spinning = true
-        @execution_context.@spinning.add(1, :relaxed)
+        @execution_context.@spinning.add(1, :acquire_release)
       end
 
       @[AlwaysInline]
       private def spin_stop
         @spinning = false
-        @execution_context.@spinning.sub(1, :relaxed)
+        @execution_context.@spinning.sub(1, :acquire_release)
       end
 
       @[AlwaysInline]
       private def spin_backoff(iter)
+        # OPTIMIZE: consider exponential backoff, but beware of edge cases, like
+        # creating latency before we notice a cross context enqueue, for example)
         Thread.yield
       end
 
       @[AlwaysInline]
       private def blocking(&)
+        # we could avoid the blocked list with MT:1 but another context could
+        # try to enqueue... maybe keep a counter of execution contexts?
+        # return yield if @execution_context.size == 1
+
         @execution_context.blocking_start(pointerof(@blocked))
         begin
           yield

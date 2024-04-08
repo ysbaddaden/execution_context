@@ -152,7 +152,7 @@ module ExecutionContext
 
     protected def wake_scheduler : Nil
       return if @size == 1
-      return if @spinning.get(:relaxed) != 0
+      return if @spinning.get(:acquire) > 0
 
       unless @blocked_list.empty?
         if blocked = @blocked_lock.sync { @blocked_list.shift? }
@@ -174,7 +174,7 @@ module ExecutionContext
 
     @[AlwaysInline]
     protected def blocking_start(blocked : Pointer(Scheduler::Blocked)) : Nil
-      blocked.value.set!
+      blocked.value.set
       @blocked_lock.sync { @blocked_list.push(blocked) }
     end
 
