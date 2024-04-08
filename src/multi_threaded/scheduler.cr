@@ -42,7 +42,7 @@ module ExecutionContext
 
           # don't interrupt the event loop for local enqueues: that's the EL
           # that enqueues runnable fibers!
-          return if @scheduler == Scheduler.current
+          return if @scheduler == ExecutionContext::Scheduler.current
 
           # another scheduler enqueued something, interrupt the blocking EL to
           # resume spinning
