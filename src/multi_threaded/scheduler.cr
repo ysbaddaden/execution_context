@@ -213,6 +213,12 @@ module ExecutionContext
               end
             end
           end
+
+          # immediately mark the scheduler as spinning (we just unparked), there
+          # is a race condition (it would be best to mark it _before_ wake up)
+          # but it should avoid too many threads being awoken in parallel (we
+          # don't need many spinning scheduler threads):
+          spin_start
         rescue exception
           Crystal::System.print_error_buffered(
             "BUG: %s#run_loop crashed with %s (%s)",
@@ -246,12 +252,16 @@ module ExecutionContext
 
       @[AlwaysInline]
       private def spin_start
+        return if @spinning
+
         @spinning = true
         @execution_context.@spinning.add(1, :acquire_release)
       end
 
       @[AlwaysInline]
       private def spin_stop
+        return unless @spinning
+
         @spinning = false
         @execution_context.@spinning.sub(1, :acquire_release)
       end

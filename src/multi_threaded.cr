@@ -167,7 +167,17 @@ module ExecutionContext
       #           block the current thread trying to wakeup another one (?)
       @mutex.synchronize do
         return if @parked == 0
+        return if @spinning.get(:acquire) > 0
 
+        # OPTIMIZE: potential thundering herd issue: we can't target a specific
+        #           scheduler to unpark, which means we may have multiple
+        #           enqueues try to wakeup multiple threads before a scheduler
+        #           is given the chance to mark itself as spinning.
+        #
+        #           maybe we could take control of the list, which would allow
+        #           to mark the scheduler as spinning before we even resume it,
+        #           along with a check that we only wake 1 scheduler thread at a
+        #           time (not multiple).
         @condition.signal
       end
     end
