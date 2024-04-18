@@ -30,6 +30,11 @@ end
 {% if flag?(:unix) %}
   lib LibEvent2
     fun event_base_loopexit(EventBase, LibC::Timeval*) : LibC::Int
+
+    # @[Flags]
+    # enum EventLoopFlags
+    #   NoExitOnEmpty = 0x04
+    # end
   end
 
   module Crystal::LibEvent
@@ -37,9 +42,10 @@ end
       struct Base
         # NOTE: may return `true` even if no event has been triggered (e.g.
         #       nonblocking), but `false` means that nothing was processed.
-        def loop(blocking : Bool) : Bool
+        def loop(blocking : Bool, exit_on_empty : Bool) : Bool
           flags = LibEvent2::EventLoopFlags::Once
           flags |= LibEvent2::EventLoopFlags::NonBlock unless blocking
+          flags |= LibEvent2::EventLoopFlags.new(0x04) unless exit_on_empty
           LibEvent2.event_base_loop(@base, flags) == 0
         end
 
@@ -52,8 +58,8 @@ end
 
   class Crystal::LibEvent::EventLoop < Crystal::EventLoop
     @[AlwaysInline]
-    def run(blocking : Bool) : Bool
-      event_base.loop(blocking)
+    def run(blocking : Bool, block_when_empty : Bool = false) : Bool
+      event_base.loop(blocking, block_when_empty)
     end
 
     @[AlwaysInline]
