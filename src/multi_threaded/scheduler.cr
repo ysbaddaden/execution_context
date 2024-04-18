@@ -84,7 +84,7 @@ module ExecutionContext
       protected def enqueue(fiber : Fiber) : Nil
         Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
         @runnables.push(fiber)
-        @execution_context.wake_scheduler
+        @execution_context.wake_scheduler unless @execution_context.size == 1
       end
 
       protected def reschedule : Nil

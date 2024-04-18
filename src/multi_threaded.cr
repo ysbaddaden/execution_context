@@ -111,6 +111,7 @@ module ExecutionContext
         ExecutionContext::Scheduler.current.enqueue(fiber)
       else
         # cross context: push to global queue
+        Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
         @global_queue.push(fiber)
         wake_scheduler
       end
@@ -151,7 +152,6 @@ module ExecutionContext
     end
 
     protected def wake_scheduler : Nil
-      return if @size == 1
       return if @spinning.get(:acquire) > 0
 
       unless @blocked_list.empty?
