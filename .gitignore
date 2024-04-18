@@ -1,2 +1,8 @@
+# shards
+/lib
+
+# artefacts
 /bench/*
 !/bench/*.cr
+/samples/*/bin
+/samples/*/lib
