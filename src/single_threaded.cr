@@ -5,7 +5,6 @@ module ExecutionContext
 
     private getter! thread : Thread
     private getter! main_fiber : Fiber
-    @deep_sleep_fiber : Fiber?
 
     getter name : String
     getter? idle : Bool = false
@@ -13,14 +12,12 @@ module ExecutionContext
     getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
 
     # TODO: Replace the Lock+Deque with a simple bounded queue with overflow to
-    #       with overflow to a GlobalQueue where cross context spawns/enqueues
-    #       would also happen.
+    #       a GlobalQueue where cross context spawns/enqueues would also happen.
     #
     #       We could reuse Runnables but there won't be any stealing, so we can
     #       spare the atomics over the local queue.
     @lock = Crystal::SpinLock.new
     @runnables = Deque(Fiber).new
-    @fiber_channel = Crystal::FiberChannel.new
 
     # :nodoc:
     def self.default : self
@@ -62,7 +59,7 @@ module ExecutionContext
         @thread = thread
         thread.execution_context = self
         thread.current_scheduler = self
-        thread.main_fiber.name = "#{@name}:main"
+        thread.main_fiber.name = "#{@name}:loop"
         @main_fiber = thread.main_fiber
         block.call
         run_loop
@@ -74,7 +71,7 @@ module ExecutionContext
       self
     end
 
-    @[Deprecated("The same_thread argument to spawn is deprecated. Create execution contexts instead")]
+    # :nodoc:
     @[AlwaysInline]
     def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
       # whatever the value for same thread, fibers will always run on the same
@@ -84,16 +81,15 @@ module ExecutionContext
 
     def enqueue(fiber : Fiber) : Nil
       Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
+
       @lock.lock
+      @runnables << fiber
 
       if @idle
-        # only wakeup once
         @idle = false
         @lock.unlock
-        @fiber_channel.send(fiber)
+        @event_loop.interrupt_loop
       else
-        # prefer to enqueue directly
-        @runnables << fiber
         @lock.unlock
       end
     end
@@ -132,20 +128,17 @@ module ExecutionContext
 
     # Dequeues one fiber from the runnable queue.
     # Fallbacks to run the event queue (nonblocking).
-    protected def dequeue? : Fiber?
+    private def dequeue? : Fiber?
       if fiber = @lock.sync { @runnables.shift? }
         return fiber
       end
 
-      if @event_loop.run(blocking: true)
-        # event loop may have enqueued a new fiber (or not)
-        if fiber = @lock.sync { @runnables.shift? }
-          return fiber
-        end
+      if @event_loop.run(blocking: false)
+        return @lock.sync { @runnables.shift? }
       end
     end
 
-    protected def run_loop : Nil
+    private def run_loop : Nil
       loop do
         @lock.lock
 
@@ -158,40 +151,19 @@ module ExecutionContext
         end
 
         # we can't check the event loop again (nonblocking) while we hold the
-        # lock (it would deadlock when calling #enqueue)
+        # lock (it would deadlock when calling #enqueue); we could _if_ it
+        # returned fibers instead of calling #enqueue
 
         # no runnable fiber, set idle state
         @idle = true
         @lock.unlock
 
-        # block on the event loop, waiting for pending event(s) to activate.
-        if @event_loop.run(blocking: true)
-          # while idling the next runnable is sent to the fiber channel
-          resume @fiber_channel.receive
-          next
-        end
-
-        # no runnable fiber, no pending event in the event loop: go into deep
-        # sleep until another context enqueues a fiber.
-        #
-        # switch to a dedicated fiber that waits on the fiber channel; we need
-        # the extra fiber to create a wait event in the event loop, leading the
-        # thread to resume the main loop, eventually waiting on the even loop.
-        resume deep_sleep_fiber
+        # always block, even when there's nothing to do: the fiber got rescheduled
+        # so we likely wait on cross context communication, like a channel:
+        @event_loop.run(blocking: true, block_when_empty: true)
       rescue ex
         message = "BUG: %s#run_loop crashed with %s"
         Crystal::System.print_error_buffered(message, self.class.name, ex.class.name, backtrace: ex.backtrace)
-      end
-    end
-
-    private def deep_sleep_fiber : Fiber
-      @deep_sleep_fiber ||= Fiber.new("#{@name}:sleep", self) do
-        loop do
-          Crystal.trace "sched:parking"
-          fiber = @fiber_channel.receive
-          Crystal.trace "sched:wakeup"
-          resume fiber
-        end
       end
     end
 
