@@ -39,7 +39,7 @@ module ExecutionContext
       @spinning = Atomic(Int32).new(0)
 
       @blocked_lock = Crystal::SpinLock.new
-      @blocked_list = Crystal::PointerLinkedList(Scheduler::Blocked).new
+      @blocked_list = Crystal::PointerLinkedList(BlockedScheduler).new
 
       start_schedulers(@size, hijack)
 

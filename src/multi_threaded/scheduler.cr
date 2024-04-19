@@ -1,4 +1,5 @@
 require "crystal/pointer_linked_list"
+require "../blocked_scheduler"
 require "../runnables"
 
 module ExecutionContext
@@ -15,40 +16,6 @@ module ExecutionContext
     # TODO: cooperative shutdown (e.g. when shrinking number of schedulers)
     class Scheduler
       include ExecutionContext::Scheduler
-
-      # :nodoc:
-      struct Blocked
-        include Crystal::PointerLinkedList::Node
-
-        def initialize(@scheduler : Scheduler)
-        end
-
-        @flag = Atomic(Int32).new(0)
-
-        @[AlwaysInline]
-        def set : Nil
-          @flag.set(1, :relaxed)
-        end
-
-        @[AlwaysInline]
-        def trigger? : Bool
-          @flag.swap(0, :relaxed) == 1
-        end
-
-        @[AlwaysInline]
-        def unblock : Nil
-          # always trigger the atomic (to avoid a useless #delete in #blocking)
-          return unless trigger?
-
-          # don't interrupt the event loop for local enqueues: that's the EL
-          # that enqueues runnable fibers!
-          return if @scheduler == ExecutionContext::Scheduler.current
-
-          # another scheduler enqueued something, interrupt the blocking EL to
-          # resume spinning
-          @scheduler.unblock
-        end
-      end
 
       protected property execution_context : MultiThreaded
       protected property! thread : Thread
@@ -67,8 +34,8 @@ module ExecutionContext
       protected def initialize(@execution_context, @name)
         @runnables = Runnables(256).new(@execution_context.global_queue)
         @event_loop = Crystal::EventLoop.create
-        @blocked = uninitialized Blocked
-        @blocked = Blocked.new(self)
+        @blocked = uninitialized BlockedScheduler
+        @blocked = BlockedScheduler.new(self)
       end
 
       # :nodoc:
@@ -221,8 +188,8 @@ module ExecutionContext
           spin_start
         rescue exception
           Crystal::System.print_error_buffered(
-            "BUG: %s#run_loop crashed with %s (%s)",
-            self.class.name, exception.message, exception.class.name,
+            "BUG: %s#run_loop [%s] crashed with %s (%s)",
+            self.class.name, @name, exception.message, exception.class.name,
             backtrace: exception.backtrace)
         end
       end
@@ -287,6 +254,7 @@ module ExecutionContext
         end
       end
 
+      @[AlwaysInline]
       protected def unblock : Nil
         # Crystal.trace "sched:unblock scheduler=%p [%s]", self.as(Void*), name
         @event_loop.interrupt_loop

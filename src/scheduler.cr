@@ -80,5 +80,9 @@ module ExecutionContext
         end
       {% end %}
     end
+
+    def unblock : NoReturn
+      raise NotImplementedError.new("#{self.class.name}#unblock")
+    end
   end
 end
