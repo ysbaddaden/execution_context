@@ -18,15 +18,19 @@ module ExecutionContext
     include ExecutionContext
     include ExecutionContext::Scheduler
 
-    getter event_loop : Crystal::EventLoop
+    getter event_loop : Crystal::EventLoop = Crystal::EventLoop.create
     getter thread : Thread
-    @main_fiber : Fiber?
+    @main_fiber : Fiber
     getter name : String
     getter? running : Bool = true
 
     def initialize(@name : String, @spawn_context = ExecutionContext.default, &@func : ->)
-      @event_loop = Crystal::EventLoop.create
       @thread = uninitialized Thread
+      @mutex = Thread::Mutex.new
+      @condition = Thread::ConditionVariable.new
+      @enqueued = AtomicBool.new(false)
+      @parked = false
+      @main_fiber = uninitialized Fiber
 
       wg = Thread::WaitGroup.new(1)
 
@@ -66,12 +70,17 @@ module ExecutionContext
     end
 
     def enqueue(fiber : Fiber) : Nil
+      Crystal.trace "sched:enqueue fiber=%p [%s] ctx=[%s]", fiber.as(Void*), fiber.name, @name
+
       if fiber == @main_fiber
         if ExecutionContext.current == self
           # local enqueue: the event loop is the one pushing
         else
           # cross context communication (e.g. channel, mutex)
-          @event_loop.interrupt_loop
+          @mutex.synchronize do
+            @enqueued.set(true, :release)
+            @condition.signal if @parked
+          end
         end
       else
         # concurrency is disabled
@@ -82,9 +91,30 @@ module ExecutionContext
     protected def reschedule : Nil
       Crystal.trace "sched:reschedule"
 
-      # always block, even when there's nothing to do; the fiber got rescheduled
-      # so we likely wait on cross context communication, like a channel:
-      @event_loop.run(blocking: true, block_when_empty: true)
+      if @event_loop.run(blocking: true)
+        Crystal.trace "sched:resume"
+        return
+      end
+
+      # avoid the mutex if another thread already enqueued
+      return if @enqueued.swap(false, :acquire)
+
+      @mutex.synchronize do
+        # avoid a race condition with #enqueue
+        return if @enqueued.swap(false, :relaxed)
+
+        Crystal.trace "sched:parking"
+        @parked = true
+
+        @condition.wait(@mutex)
+
+        @parked = false
+        @enqueued.set(false, :relaxed)
+      end
+
+      if @main_fiber.dead?
+        raise "BUG: can't resume dead fiber: #{@main_fiber}"
+      end
 
       Crystal.trace "sched:resume"
     end
@@ -94,10 +124,16 @@ module ExecutionContext
     end
 
     private def run
+      Crystal.trace "sched:started"
       @func.call
-    rescue ex
-      message = "BUG: %s#run crashed with %s"
-      Crystal::System.print_error_buffered(message, self.class.name, ex.class.name, backtrace: ex.backtrace)
+    rescue exception
+      Crystal::System.print_error_buffered(
+        "BUG: %s#run [%s] crashed with %s (%s)",
+        self.class.name,
+        @name,
+        exception.message,
+        exception.class.name,
+        backtrace: exception.backtrace)
     ensure
       @running = false
     end
