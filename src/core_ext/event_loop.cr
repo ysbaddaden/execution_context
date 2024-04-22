@@ -42,10 +42,10 @@ end
       struct Base
         # NOTE: may return `true` even if no event has been triggered (e.g.
         #       nonblocking), but `false` means that nothing was processed.
-        def loop(blocking : Bool, exit_on_empty : Bool) : Bool
+        def loop(nonblock : Bool, no_exit_on_empty : Bool) : Bool
           flags = LibEvent2::EventLoopFlags::Once
-          flags |= LibEvent2::EventLoopFlags::NonBlock unless blocking
-          flags |= LibEvent2::EventLoopFlags.new(0x04) unless exit_on_empty
+          flags |= LibEvent2::EventLoopFlags::NonBlock if nonblock
+          flags |= LibEvent2::EventLoopFlags.new(0x04) if no_exit_on_empty
           LibEvent2.event_base_loop(@base, flags) == 0
         end
 
@@ -59,7 +59,7 @@ end
   class Crystal::LibEvent::EventLoop < Crystal::EventLoop
     @[AlwaysInline]
     def run(blocking : Bool, block_when_empty : Bool = false) : Bool
-      event_base.loop(blocking, block_when_empty)
+      event_base.loop(!blocking, block_when_empty)
     end
 
     @[AlwaysInline]
