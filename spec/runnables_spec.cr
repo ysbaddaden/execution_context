@@ -3,7 +3,7 @@ require "../src/runnables"
 
 describe ExecutionContext::Runnables do
   it "#initialize" do
-    g = ExecutionContext::GlobalQueue.new
+    g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
     r = ExecutionContext::Runnables(16).new(g)
     r.capacity.should eq(16)
   end
@@ -13,7 +13,7 @@ describe ExecutionContext::Runnables do
       fibers = 4.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
 
       # local enqueue
-      g = ExecutionContext::GlobalQueue.new
+      g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       r = ExecutionContext::Runnables(4).new(g)
       fibers.each { |f| r.push(f) }
 
@@ -29,7 +29,7 @@ describe ExecutionContext::Runnables do
       fibers = 5.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
 
       # local enqueue + overflow
-      g = ExecutionContext::GlobalQueue.new
+      g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       r = ExecutionContext::Runnables(4).new(g)
       fibers.each { |f| r.push(f) }
 
@@ -44,7 +44,7 @@ describe ExecutionContext::Runnables do
     end
 
     it "can always push up to capacity" do
-      g = ExecutionContext::GlobalQueue.new
+      g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       r = ExecutionContext::Runnables(4).new(g)
 
       4.times do
@@ -78,7 +78,7 @@ describe ExecutionContext::Runnables do
       fibers.each { |f| q.push(f) }
 
       # local enqueue
-      g = ExecutionContext::GlobalQueue.new
+      g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       r = ExecutionContext::Runnables(4).new(g)
       r.bulk_push(pointerof(q), 4)
 
@@ -92,7 +92,7 @@ describe ExecutionContext::Runnables do
       fibers.each { |f| q.push(f) }
 
       # local enqueue + overflow
-      g = ExecutionContext::GlobalQueue.new
+      g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       r = ExecutionContext::Runnables(4).new(g)
       r.bulk_push(pointerof(q), 5)
 
@@ -115,7 +115,7 @@ describe ExecutionContext::Runnables do
 
   describe "#steal_from" do
     it "steals from another runnables" do
-      g = ExecutionContext::GlobalQueue.new
+      g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       fibers = 6.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
 
       # fill the source queue
@@ -154,7 +154,7 @@ describe ExecutionContext::Runnables do
         FiberCounter.new(Fiber.new(name: "f#{i}") { })
       end
 
-      global_queue = ExecutionContext::GlobalQueue.new
+      global_queue = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       ready = Thread::WaitGroup.new(n)
       shutdown = Thread::WaitGroup.new(n)
 

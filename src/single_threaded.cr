@@ -1,3 +1,4 @@
+require "./atomic_bool"
 require "./blocked_scheduler"
 require "./global_queue"
 require "./runnables"
@@ -18,8 +19,10 @@ module ExecutionContext
     protected getter global_queue : GlobalQueue
     @runnables : Runnables(256)
 
-    @tick : Int32 = 0
     getter? idle : Bool = false
+    @parked = AtomicBool.new(false)
+    @spinning = AtomicBool.new(false)
+    @tick : Int32 = 0
 
     # :nodoc:
     def self.default : self
@@ -31,13 +34,11 @@ module ExecutionContext
     end
 
     protected def initialize(@name : String, hijack : Bool)
-      @global_queue = GlobalQueue.new
-      @runnables = Runnables(256).new(@global_queue)
-
       @mutex = Thread::Mutex.new
       @condition = Thread::ConditionVariable.new
-      @parked = false
-      @spinning = Atomic(UInt8).new(0_u8)
+
+      @global_queue = GlobalQueue.new(@mutex)
+      @runnables = Runnables(256).new(@global_queue)
 
       @thread = uninitialized Thread
       @main_fiber = uninitialized Fiber
@@ -146,7 +147,7 @@ module ExecutionContext
       # current fiber (that may have been sent)
 
       # grab from global queue (tries to refill local queue)
-      if fiber = global_dequeue?
+      if fiber = @global_queue.grab?(@runnables, divisor: 1)
         return fiber
       end
 
@@ -158,19 +159,14 @@ module ExecutionContext
       end
     end
 
-    @[AlwaysInline]
-    private def global_dequeue? : Fiber?
-      if fiber = global_queue.grab?(@runnables, divisor: 1)
-        fiber
-      end
-    end
-
     private def run_loop : Nil
+      Crystal.trace "sched:started"
+
       loop do
         @idle = true
 
         runnable { @runnables.get? }
-        runnable { global_dequeue? }
+        runnable { @global_queue.grab?(@runnables, divisor: 1) }
 
         if @event_loop.run(blocking: false)
           runnable { @runnables.get? }
@@ -182,7 +178,7 @@ module ExecutionContext
             runnable { @runnables.get? }
           end
 
-          runnable { global_dequeue? }
+          runnable { @global_queue.grab?(@runnables, divisor: 1) }
         end
 
         # block on the event loop, waiting for pending event(s) to activate
@@ -199,25 +195,28 @@ module ExecutionContext
             # enqueued fiber(s) and already tried to wakeup the scheduler
             # (race). we don't check the scheduler's local queue nor its
             # event loop (both are empty)
-            if fiber = global_dequeue?
+            if fiber = @global_queue.unsafe_grab?(@runnables, divisor: 1)
               break fiber
             end
           end
         end
 
         # immediately mark the scheduler as spinning (we just unparked)
-        spin_start
+        @spinning.set(true, :release)
       rescue exception
         Crystal::System.print_error_buffered(
           "BUG: %s#run_loop [%s] crashed with %s (%s)",
-          self.class.name, @name, exception.message, exception.class.name,
+          self.class.name,
+          @name,
+          exception.message,
+          exception.class.name,
           backtrace: exception.backtrace)
       end
     end
 
     private macro runnable(&)
       if %fiber = {{yield}}
-        spin_stop if spinning?
+        @spinning.set(false, :release) if @spinning.get(:relaxed)
         @idle = false
         resume %fiber
         next
@@ -225,35 +224,20 @@ module ExecutionContext
     end
 
     private def spinning(&)
-      spin_start
+      @spinning.set(true, :release)
 
       4.times do |iter|
         yield
         spin_backoff(iter)
       end
 
-      spin_stop
-    end
-
-    @[AlwaysInline]
-    private def spinning? : Bool
-      @spinning.get(:acquire) == 1_u8
-    end
-
-    @[AlwaysInline]
-    private def spin_start
-      @spinning.set(1_u8, :release)
-    end
-
-    @[AlwaysInline]
-    private def spin_stop
-      @spinning.set(0_u8, :release)
+      @spinning.set(false, :release)
     end
 
     @[AlwaysInline]
     private def spin_backoff(iter)
-      # OPTIMIZE: consider exponential backoff, but beware of edge cases, like
-      # creating latency before we notice a cross context enqueue, for example)
+      # OPTIMIZE: consider exponential backoff, but beware of latency to notice
+      #           cross context enqueues
       Thread.yield
     end
 
@@ -281,9 +265,11 @@ module ExecutionContext
         end
 
         Crystal.trace "sched:parking"
-        @parked = true
+        @parked.set(true, :release)
+
         @condition.wait(@mutex)
-        @parked = false
+
+        @parked.set(false, :release)
         Crystal.trace "sched:wakeup"
       end
 
@@ -291,21 +277,31 @@ module ExecutionContext
     end
 
     # This method runs in parallel to the rest of the ST scheduler!
+    #
+    # This is called from another context _after_ enqueueing into the global
+    # queue to try and wakeup the ST thread running in parallel that may be
+    # running, spinning, blocked or parked.
     private def wake_scheduler : Nil
-      return if spinning?
+      # return unless @idle
+      return if @spinning.get(:acquire)
 
       if @blocked.trigger?
         @blocked.unblock
         return
       end
 
-      return unless @parked
+      # we can check @parked without locking the mutex because we can't push to
+      # the global queue _and_ park the thread at the same time, so either the
+      # thread is already parked (and we must awake it) or it noticed (or will
+      # notice) the fiber in the global queue;
+      #
+      # we still rely on an atomic to make sure the actual value is visible by
+      # the current thread
+      return unless @parked.get(:acquire)
 
       @mutex.synchronize do
-        return unless @parked
-        return if spinning?
-
-        @condition.signal
+        # check again to skip another syscall
+        @condition.signal if @parked.get(:acquire)
       end
     end
 

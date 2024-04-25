@@ -103,23 +103,6 @@ module ExecutionContext
         if fiber = @runnables.get?
           return fiber
         end
-
-        # OPTIMIZE: the following may block the current fiber for a while (e.g.
-        #           lock on GQ, or processing lots of EL events) consider only
-        #           doing so in the scheduler's main fiber only to avoid
-        #           blocking the current fiber for too long
-
-        # grab from global queue (tries to refill local queue)
-        # if fiber = global_dequeue?
-        #   return fiber
-        # end
-      end
-
-      @[AlwaysInline]
-      private def global_dequeue? : Fiber?
-        if fiber = @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
-          fiber
-        end
       end
 
       private def try_steal? : Fiber?
@@ -136,11 +119,13 @@ module ExecutionContext
       end
 
       protected def run_loop : Nil
+        Crystal.trace "sched:started"
+
         loop do
           @idle = true
 
           runnable { @runnables.get? }
-          runnable { global_dequeue? }
+          runnable { @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size) }
 
           if @event_loop.run(blocking: false)
             runnable { @runnables.get? }
@@ -154,7 +139,7 @@ module ExecutionContext
               runnable { @runnables.get? }
             end
 
-            runnable { global_dequeue? }
+            runnable { @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size) }
           end
 
           # block on the event loop, waiting for pending event(s) to activate
@@ -171,10 +156,11 @@ module ExecutionContext
               # enqueued fiber(s) and already tried to wakeup a thread (race).
               # we don't check the scheduler's local queue nor its event loop
               # (both are empty)
-              if fiber = global_dequeue?
+              if fiber = @execution_context.global_queue.unsafe_grab?(@runnables, divisor: @execution_context.size)
                 break fiber
               end
 
+              # OPTIMIZE: may hold the lock for a while (increasing with threads)
               if fiber = try_steal?
                 break fiber
               end
@@ -189,7 +175,10 @@ module ExecutionContext
         rescue exception
           Crystal::System.print_error_buffered(
             "BUG: %s#run_loop [%s] crashed with %s (%s)",
-            self.class.name, @name, exception.message, exception.class.name,
+            self.class.name,
+            @name,
+            exception.message,
+            exception.class.name,
             backtrace: exception.backtrace)
         end
       end
@@ -203,6 +192,7 @@ module ExecutionContext
         end
       end
 
+      # OPTIMIZE: skip spinning if spinning >= running/2
       private def spinning(&)
         # we could avoid spinning with MT:1 but another context could try to
         # enqueue... maybe keep a counter of execution contexts?

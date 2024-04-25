@@ -32,7 +32,7 @@ end
 
 describe ExecutionContext::GlobalQueue do
   it "#initialize" do
-    q = ExecutionContext::GlobalQueue.new
+    q = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
     q.empty?.should be_true
   end
 
@@ -41,7 +41,7 @@ describe ExecutionContext::GlobalQueue do
     f2 = Fiber.new(name: "f2") { }
     f3 = Fiber.new(name: "f3") { }
 
-    q = ExecutionContext::GlobalQueue.new
+    q = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
     q.unsafe_push(f1)
     q.size.should eq(1)
 
@@ -61,13 +61,13 @@ describe ExecutionContext::GlobalQueue do
 
   describe "#unsafe_grab?" do
     it "can't grab from empty queue" do
-      q = ExecutionContext::GlobalQueue.new
+      q = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       runnables = FakeRunnables.new(6)
       q.unsafe_grab?(runnables, 4).should be_nil
     end
 
     it "grabs fibers" do
-      q = ExecutionContext::GlobalQueue.new
+      q = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       fibers = 10.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
       fibers.each { |f| q.unsafe_push(f) }
 
@@ -90,7 +90,7 @@ describe ExecutionContext::GlobalQueue do
 
     it "can't grab more than available" do
       f = Fiber.new { }
-      q = ExecutionContext::GlobalQueue.new
+      q = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       q.unsafe_push(f)
 
       # dequeues the unique fiber
@@ -111,7 +111,7 @@ describe ExecutionContext::GlobalQueue do
 
       n = 7
       increments = 15
-      queue = ExecutionContext::GlobalQueue.new
+      queue = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       ready = Thread::WaitGroup.new(n)
       shutdown = Thread::WaitGroup.new(n)
 
@@ -159,7 +159,7 @@ describe ExecutionContext::GlobalQueue do
         FiberCounter.new(Fiber.new(name: "f#{i}") { })
       end
 
-      queue = ExecutionContext::GlobalQueue.new
+      queue = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       ready = Thread::WaitGroup.new(n)
       shutdown = Thread::WaitGroup.new(n)
 

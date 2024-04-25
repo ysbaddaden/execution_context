@@ -10,15 +10,14 @@ module ExecutionContext
   #
   # Ported from Go's `globrunq*` functions.
   class GlobalQueue
-    def initialize
+    def initialize(@mutex : Thread::Mutex)
       @queue = Queue.new(nil, nil)
       @size = 0
-      @lock = Crystal::SpinLock.new
     end
 
     # Grabs the lock and enqueues a runnable fiber on the global runnable queue.
     def push(fiber : Fiber) : Nil
-      lock { unsafe_push(fiber) }
+      @mutex.synchronize { unsafe_push(fiber) }
     end
 
     # Enqueues a runnable fiber on the global runnable queue. Assumes the lock
@@ -33,7 +32,7 @@ module ExecutionContext
     #
     # TODO: rename as `#bulk_push`
     def push(queue : Queue*, size : Int32) : Nil
-      lock { unsafe_push(queue, size) }
+      @mutex.synchronize { unsafe_push(queue, size) }
     end
 
     # Puts a runnable fiber on the global runnable queue. Assumes the lock is
@@ -49,7 +48,7 @@ module ExecutionContext
     # Grabs the lock and dequeues one runnable fiber from the global runnable
     # queue.
     def pop? : Fiber?
-      lock { unsafe_pop? }
+      @mutex.synchronize { unsafe_pop? }
     end
 
     # Dequeues one runnable fiber from the global runnable queue. Assumes the
@@ -68,7 +67,7 @@ module ExecutionContext
     # `divisor` is meant for fair distribution of fibers across threads in the
     # execution context; it should be the number of threads.
     def grab?(runnables, divisor : Int32) : Fiber?
-      lock { unsafe_grab?(runnables, divisor) }
+      @mutex.synchronize { unsafe_grab?(runnables, divisor) }
     end
 
     # Try to grab a batch of fibers from the global runnable queue. Returns the
@@ -107,16 +106,6 @@ module ExecutionContext
     @[AlwaysInline]
     def size : Int32
       @size
-    end
-
-    @[AlwaysInline]
-    def lock(&)
-      @lock.lock
-      begin
-        yield
-      ensure
-        @lock.unlock
-      end
     end
   end
 end

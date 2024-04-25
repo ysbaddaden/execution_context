@@ -16,6 +16,9 @@ module ExecutionContext
     getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
     protected getter global_queue : GlobalQueue
 
+    @parked = Atomic(Int32).new(0)
+    @spinning = Atomic(Int32).new(0)
+
     # :nodoc:
     def self.default(size : Int32) : self
       new("DEFAULT", size, hijack: true)
@@ -28,15 +31,13 @@ module ExecutionContext
     protected def initialize(@name : String, @size : Int32, hijack = false)
       raise "ERROR: needs at least one thread" if @size <= 0
 
-      @global_queue = GlobalQueue.new
+      @mutex = Thread::Mutex.new
+      @condition = Thread::ConditionVariable.new
+
+      @global_queue = GlobalQueue.new(@mutex)
       @schedulers = Array(Scheduler).new(@size)
       @threads = Array(Thread).new(@size)
       @rng = Random::PCG32.new
-
-      @mutex = Thread::Mutex.new
-      @condition = Thread::ConditionVariable.new
-      @parked = 0
-      @spinning = Atomic(Int32).new(0)
 
       @blocked_lock = Crystal::SpinLock.new
       @blocked_list = Crystal::PointerLinkedList(BlockedScheduler).new
@@ -142,15 +143,23 @@ module ExecutionContext
         end
 
         Crystal.trace "sched:parking"
-        @parked += 1
+        @parked.add(1, :acquire_release)
+
         @condition.wait(@mutex)
-        @parked -= 1
+
+        @parked.sub(1, :acquire_release)
         Crystal.trace "sched:wakeup"
       end
 
       nil
     end
 
+    # This method always runs in parallel!
+    #
+    # This can be called from any thread in the context but can also be called
+    # from external execution contexts, in which case the context may have its
+    # last thread about to park itself, and we must prevent the last thread from
+    # parking when there is a parallel cross context enqueue!
     protected def wake_scheduler : Nil
       return if @spinning.get(:acquire) > 0
 
@@ -161,12 +170,18 @@ module ExecutionContext
         return
       end
 
-      return if @parked == 0
+      # we can check @parked without locking the mutex because we can't push to
+      # the global queue _and_ park the thread at the same time, so either the
+      # thread is already parked (and we must awake it) or it noticed (or will
+      # notice) the fiber in the global queue;
+      #
+      # we still rely on an atomic to make sure the actual value is visible by
+      # the current thread
+      return if @parked.get(:acquire) == 0
 
-      # OPTIMIZE: use trylock and return if we couldn't lock the mutex so we don't
-      #           block the current thread trying to wakeup another one (?)
       @mutex.synchronize do
-        return if @parked == 0
+        # OPTIMIZE: would :relaxed atomics be enough?
+        return if @parked.get(:acquire) == 0
         return if @spinning.get(:acquire) > 0
 
         # OPTIMIZE: potential thundering herd issue: we can't target a specific
