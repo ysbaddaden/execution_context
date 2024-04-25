@@ -6,23 +6,20 @@ module ExecutionContext
     def initialize(@scheduler : Scheduler)
     end
 
-    @flag = Atomic(Int32).new(0)
+    @flag = AtomicBool.new(false)
 
     @[AlwaysInline]
     def set : Nil
-      @flag.set(1, :relaxed)
+      @flag.set(true, :release)
     end
 
     @[AlwaysInline]
     def trigger? : Bool
-      @flag.swap(0, :relaxed) == 1
+      @flag.swap(false, :acquire)
     end
 
     @[AlwaysInline]
     def unblock : Nil
-      # always trigger the atomic (to avoid a useless #delete in #blocking)
-      return unless trigger?
-
       # don't interrupt the event loop for local enqueues: that's the EL
       # that enqueues runnable fibers!
       return if @scheduler == ExecutionContext::Scheduler.current

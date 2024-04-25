@@ -1,3 +1,4 @@
+require "./blocked_scheduler"
 require "./global_queue"
 require "./multi_threaded/scheduler"
 
@@ -165,7 +166,7 @@ module ExecutionContext
 
       unless @blocked_list.empty?
         if blocked = @blocked_lock.sync { @blocked_list.shift? }
-          blocked.value.unblock
+          blocked.value.unblock if blocked.value.trigger?
         end
         return
       end
@@ -198,13 +199,13 @@ module ExecutionContext
     end
 
     @[AlwaysInline]
-    protected def blocking_start(blocked : Pointer(Scheduler::Blocked)) : Nil
+    protected def blocking_start(blocked : Pointer(BlockedScheduler)) : Nil
       blocked.value.set
       @blocked_lock.sync { @blocked_list.push(blocked) }
     end
 
     @[AlwaysInline]
-    protected def blocking_stop(blocked : Pointer(Scheduler::Blocked)) : Nil
+    protected def blocking_stop(blocked : Pointer(BlockedScheduler)) : Nil
       return unless blocked.value.trigger?
       @blocked_lock.sync { @blocked_list.delete(blocked) }
     end
