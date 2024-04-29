@@ -25,10 +25,6 @@ module ExecutionContext
       new("DEFAULT", size, hijack: true)
     end
 
-    def self.new(name : String, size : Int32) : self
-      new(name, size, hijack: false)
-    end
-
     protected def initialize(@name : String, @size : Int32, hijack = false)
       raise "ERROR: needs at least one thread" if @size <= 0
 
@@ -48,6 +44,10 @@ module ExecutionContext
       # self.spawn(name: "#{@name}:stackpool-collect") do
       #   stack_pool.collect_loop
       # end
+    end
+
+    def self.new(name : String, size : Int32) : self
+      new(name, size, hijack: false)
     end
 
     # Starts `count` schedulers and threads.
