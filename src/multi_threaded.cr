@@ -29,7 +29,7 @@ module ExecutionContext
       new(name, size, hijack: false)
     end
 
-    protected def initialize(@name : String, @size : Int32, hijack = false)
+    protected def initialize(@name : String, @size : Int32, hijack : Bool)
       raise "ERROR: needs at least one thread" if @size <= 0
 
       @mutex = Thread::Mutex.new
