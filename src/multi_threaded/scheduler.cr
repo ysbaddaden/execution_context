@@ -258,9 +258,7 @@ module ExecutionContext
       def to_s(io : IO) : Nil
         io << "#<" << self.class.name << ":0x"
         object_id.to_s(io, 16)
-        io << ' ' << @name << " thread=0x"
-        thread.@system_handle.to_s(io, 16)
-        io << '>'
+        io << ' ' << @name << '>'
       end
     end
   end

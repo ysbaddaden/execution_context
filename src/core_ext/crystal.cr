@@ -30,10 +30,18 @@ module Crystal
 
   macro trace(fmt, *args)
     {% if flag?(:sched_tracing) %}
-      %buf = Crystal::StackIO(512).new
+      %buf = Crystal::StackIO(512).new # 512 == PIPE_BUF (minimum as per POSIX)
       %thread = Thread.current
       %fiber = Fiber.current
-      Crystal::System.print_error("th=0x%lx [%s] fi=%p [%s] ", %thread.@system_handle, %thread.name, %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
+
+      {% if flag?(:wasm32) %}
+        Crystal::System.print_error("fi=%p [%s] ", %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
+      {% elsif flag?(:linux) %}
+        Crystal::System.print_error("th=0x%lx [%s] fi=%p [%s] ", %thread.@system_handle, %thread.name, %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
+      {% else %}
+        Crystal::System.print_error("th=%p [%s] fi=%p [%s] ", %thread.@system_handle, %thread.name, %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
+      {% end %}
+
       Crystal::System.print_error({{fmt}}, {{args.splat}}) { |bytes| %buf.write(bytes) }
       %buf.write("\n")
 
