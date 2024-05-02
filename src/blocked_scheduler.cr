@@ -6,7 +6,7 @@ module ExecutionContext
     def initialize(@scheduler : Scheduler)
     end
 
-    @flag = AtomicBool.new(false)
+    @flag = Atomic(Bool).new(false)
 
     @[AlwaysInline]
     def set : Nil

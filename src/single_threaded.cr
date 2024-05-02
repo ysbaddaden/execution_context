@@ -1,4 +1,3 @@
-require "./atomic_bool"
 require "./blocked_scheduler"
 require "./global_queue"
 require "./runnables"
@@ -20,8 +19,8 @@ module ExecutionContext
     @runnables : Runnables(256)
 
     getter? idle : Bool = false
-    @parked = AtomicBool.new(false)
-    @spinning = AtomicBool.new(false)
+    @parked = Atomic(Bool).new(false)
+    @spinning = Atomic(Bool).new(false)
     @tick : Int32 = 0
 
     # :nodoc:

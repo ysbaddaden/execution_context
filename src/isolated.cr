@@ -28,7 +28,7 @@ module ExecutionContext
       @thread = uninitialized Thread
       @mutex = Thread::Mutex.new
       @condition = Thread::ConditionVariable.new
-      @enqueued = AtomicBool.new(false)
+      @enqueued = Atomic(Bool).new(false)
       @parked = false
       @main_fiber = uninitialized Fiber
 
