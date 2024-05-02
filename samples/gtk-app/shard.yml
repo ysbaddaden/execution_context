@@ -1,0 +1,19 @@
+name: gtk-app
+version: 0.1.0
+
+description: |
+  Example Gtk Application
+
+dependencies:
+  gobject:
+    github: jhass/crystal-gobject
+    branch: main
+
+  execution_context:
+    path: ../..
+
+targets:
+  main:
+    main: src/main.cr
+
+license: MIT
