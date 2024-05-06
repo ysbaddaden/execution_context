@@ -5,9 +5,6 @@ class Thread
   # :nodoc:
   property! current_scheduler : ExecutionContext::Scheduler
 
-  # :nodoc:
-  property! current_fiber : Fiber
-
   def execution_context=(@execution_context : ExecutionContext)
     main_fiber.execution_context = execution_context
   end
@@ -24,18 +21,17 @@ class Thread
     end
   end
 
-  # the following methods set `@current_fiber` and are otherwise identical to crystal:master
+  # the following methods apply these patches:
+  # https://github.com/crystal-lang/crystal/pull/14558
 
-  def initialize
-    @func = ->(t : Thread) {}
-    @system_handle = Crystal::System::Thread.current_handle
-    @current_fiber = @main_fiber = Fiber.new(stack_address, self)
+  def initialize(@name : String? = nil, &@func : Thread ->)
+    @system_handle = uninitialized Crystal::System::Thread::Handle
+    init_handle
 
-    Thread.threads.push(self)
+    Thread.threads.push(self) # <= moved here
   end
 
   protected def start
-    Thread.threads.push(self)
     Thread.current = self
     @current_fiber = @main_fiber = fiber = Fiber.new(stack_address, self)
 
@@ -48,6 +44,15 @@ class Thread
     rescue ex
       @exception = ex
     ensure
+      {% if flag?(:preview_mt) %}
+        # fix the thread stack now so we can start cleaning up references
+        GC.lock_read
+        GC.set_stackbottom(self, fiber.@stack_bottom)
+        GC.unlock_read
+      {% else %}
+        GC.set_stackbottom(fiber.@stack_bottom)
+      {% end %}
+
       Thread.threads.delete(self)
       Fiber.inactive(fiber)
       detach { system_close }

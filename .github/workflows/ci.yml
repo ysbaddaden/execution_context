@@ -32,6 +32,5 @@ jobs:
         with:
           crystal: nightly
         id: crystal
-      - run: for f in patches/*; do cat $f | patch -d ${{ steps.crystal.outputs.path }} -p1; done
       - run: crystal spec -Dpreview_mt spec/*_spec.cr -v
       - run: crystal spec -Dpreview_mt -Dmt spec/*_spec.cr -v
