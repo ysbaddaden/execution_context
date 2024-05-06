@@ -247,7 +247,7 @@ module ExecutionContext
       @[AlwaysInline]
       protected def unblock : Nil
         # Crystal.trace "sched:unblock scheduler=%p [%s]", self.as(Void*), name
-        @event_loop.interrupt_loop
+        @event_loop.interrupt
       end
 
       @[AlwaysInline]
