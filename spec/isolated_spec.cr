@@ -32,27 +32,27 @@ describe ExecutionContext::Isolated do
   describe "#spawn" do
     it "spawns into the default context" do
       timeout = TestTimeout.new
-      thread = nil
+      execution_context = nil
 
       ExecutionContext::Isolated.new("TEST") do
         spawn do
-          thread = Thread.current
+          execution_context = ExecutionContext.current
           timeout.cancel
         end
       end
 
       timeout.sleep
-      thread.should eq(Thread.current)
+      execution_context.should eq(ExecutionContext.current)
     end
 
     it "spawns into the specified context" do
       timeout = TestTimeout.new
-      thread = nil
-      test_thread = nil
+      execution_context = nil
+      test_execution_context = nil
 
       other = ExecutionContext::SingleThreaded.new("STX")
       other.spawn(name: "StFiber") do
-        thread = Thread.current
+        execution_context = ExecutionContext.current
         timeout.cancel
       end
 
@@ -61,13 +61,13 @@ describe ExecutionContext::Isolated do
 
       ExecutionContext::Isolated.new("UNQ", spawn_context: other) do
         spawn(name: "UnqFiber") do
-          test_thread = Thread.current
+          test_execution_context = ExecutionContext.current
           timeout.cancel
         end
       end
 
       timeout.sleep
-      test_thread.should eq(thread)
+      test_execution_context.should eq(execution_context)
     end
   end
 
