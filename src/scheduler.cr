@@ -60,6 +60,10 @@ module ExecutionContext
     protected def swapcontext(fiber : Fiber) : Nil
       current_fiber = thread.current_fiber
 
+      {% if @top_level.has_constant?(:PerfTools) && PerfTools.has_constant?(:FiberTrace) %}
+        PerfTools::FiberTrace.track_fiber(:yield, current_fiber)
+      {% end %}
+
       {% unless flag?(:interpreted) %}
         thread.dead_fiber = current_fiber if current_fiber.dead?
       {% end %}

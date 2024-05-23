@@ -59,6 +59,10 @@ class Fiber
     makecontext(stack_ptr, fiber_main)
 
     Fiber.fibers.push(self)
+
+    {% if @top_level.has_constant?(:PerfTools) && PerfTools.has_constant?(:FiberTrace) %}
+      PerfTools::FiberTrace.track_fiber(:spawn, self)
+    {% end %}
   end
 
   # def initialize(stack : Void*, thread)
