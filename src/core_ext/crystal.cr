@@ -23,8 +23,8 @@ module Crystal
       @size = size + n
     end
 
-    def to_unsafe : UInt8*
-      @buffer.to_unsafe
+    def to_slice : Bytes
+      Slice.new(@buffer.to_unsafe, @size)
     end
   end
 
@@ -35,21 +35,17 @@ module Crystal
       %fiber = Fiber.current
 
       {% if flag?(:wasm32) %}
-        Crystal::System.print_error("fi=%p [%s] ", %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
+        Crystal::System.printf("fi=%p [%s] ", %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
       {% elsif flag?(:linux) %}
-        Crystal::System.print_error("th=0x%lx [%s] fi=%p [%s] ", %thread.@system_handle, %thread.name, %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
+        Crystal::System.printf("th=0x%lx [%s] fi=%p [%s] ", %thread.@system_handle, %thread.name, %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
       {% else %}
-        Crystal::System.print_error("th=%p [%s] fi=%p [%s] ", %thread.@system_handle, %thread.name, %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
+        Crystal::System.printf("th=%p [%s] fi=%p [%s] ", %thread.@system_handle, %thread.name, %fiber.as(Void*), %fiber.name) { |bytes| %buf.write(bytes) }
       {% end %}
 
-      Crystal::System.print_error({{fmt}}, {{args.splat}}) { |bytes| %buf.write(bytes) }
+      Crystal::System.printf({{fmt}}, {{args.splat}}) { |bytes| %buf.write(bytes) }
       %buf.write("\n")
 
-      {% if flag?(:unix) || flag?(:wasm32) %}
-        LibC.write(2, %buf.to_unsafe, %buf.size)
-      {% elsif flag?(:win32) %}
-        LibC.WriteFile(LibC.GetStdHandle(LibC::STD_ERROR_HANDLE), %buf.to_unsafe, %buf.size, out _, nil)
-      {% end %}
+      Crystal::System.print_error(%buf.to_slice)
 
       nil
     {% end %}
