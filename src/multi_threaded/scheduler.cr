@@ -124,54 +124,14 @@ module ExecutionContext
         loop do
           @idle = true
 
-          runnable { @runnables.get? }
-          runnable { @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size) }
-
-          if @event_loop.run(blocking: false)
-            runnable { @runnables.get? }
+          if fiber = run_loop_iteration
+            spin_stop if @spinning
+            @idle = false
+            resume fiber
+          else
+            # the event loop enqueued a fiber (or was interrupted) or the
+            # scheduler was unparked: go for the next iteration
           end
-
-          # nothing to do: start spinning
-          spinning do
-            runnable { try_steal? }
-
-            if @event_loop.run(blocking: false)
-              runnable { @runnables.get? }
-            end
-
-            runnable { @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size) }
-          end
-
-          # block on the event loop, waiting for pending event(s) to activate
-          if blocking { @event_loop.run(blocking: true) }
-            # the event loop enqueud a fiber or was interrupted: restart
-            next
-          end
-
-          # no runnable fiber, no event in the local event loop: go into deep
-          # sleep until another scheduler or another context enqueues a fiber
-          runnable do
-            @execution_context.park_thread do
-              # by the time we acquired the lock, another thread may have
-              # enqueued fiber(s) and already tried to wakeup a thread (race).
-              # we don't check the scheduler's local queue nor its event loop
-              # (both are empty)
-              if fiber = @execution_context.global_queue.unsafe_grab?(@runnables, divisor: @execution_context.size)
-                break fiber
-              end
-
-              # OPTIMIZE: may hold the lock for a while (increasing with threads)
-              if fiber = try_steal?
-                break fiber
-              end
-            end
-          end
-
-          # immediately mark the scheduler as spinning (we just unparked), there
-          # is a race condition (it would be best to mark it _before_ wake up)
-          # but it should avoid too many threads being awoken in parallel (we
-          # don't need many spinning scheduler threads):
-          spin_start
         rescue exception
           Crystal::System.print_error_buffered(
             "BUG: %s#run_loop [%s] crashed with %s (%s)",
@@ -183,13 +143,66 @@ module ExecutionContext
         end
       end
 
-      private macro runnable(&)
-        if %fiber = {{yield}}
-          spin_stop if @spinning
-          @idle = false
-          resume %fiber
-          next
+      private def run_loop_iteration : Fiber?
+        if fiber = @runnables.get?
+          return fiber
         end
+
+        if fiber = @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
+          return fiber
+        end
+
+        if @event_loop.run(blocking: false)
+          if fiber = @runnables.get?
+            return fiber
+          end
+        end
+
+        # nothing to do: start spinning
+        spinning do
+          if fiber = try_steal?
+            return fiber
+          end
+
+          if @event_loop.run(blocking: false)
+            if fiber = @runnables.get?
+              return fiber
+            end
+          end
+
+          if fiber = @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
+            return fiber
+          end
+        end
+
+        # block on the event loop, waiting for pending event(s) to activate
+        if blocking { @event_loop.run(blocking: true) }
+          # the event loop enqueud a fiber or was interrupted: restart
+          return
+        end
+
+        # no runnable fiber, no event in the local event loop: go into deep
+        # sleep until another scheduler or another context enqueues a fiber
+        @execution_context.park_thread do
+          # by the time we acquired the lock, another thread may have
+          # enqueued fiber(s) and already tried to wakeup a thread (race).
+          # we don't check the scheduler's local queue nor its event loop
+          # (both are empty)
+          if fiber = @execution_context.global_queue.unsafe_grab?(@runnables, divisor: @execution_context.size)
+            return fiber
+          end
+
+          # OPTIMIZE: may hold the lock for a while (increasing with threads)
+          if fiber = try_steal?
+            return fiber
+          end
+        end
+
+        # immediately mark the scheduler as spinning (we just unparked), there
+        # is a race condition (it would be best to mark it _before_ wake up)
+        # but it should avoid too many threads being awoken in parallel (we
+        # don't need many spinning scheduler threads):
+        spin_start
       end
 
       # OPTIMIZE: skip spinning if spinning >= running/2
@@ -208,7 +221,7 @@ module ExecutionContext
       end
 
       @[AlwaysInline]
-      private def spin_start
+      private def spin_start : Nil
         return if @spinning
 
         @spinning = true
@@ -216,7 +229,7 @@ module ExecutionContext
       end
 
       @[AlwaysInline]
-      private def spin_stop
+      private def spin_stop : Nil
         return unless @spinning
 
         @spinning = false

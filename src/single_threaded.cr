@@ -164,44 +164,14 @@ module ExecutionContext
       loop do
         @idle = true
 
-        runnable { @runnables.get? }
-        runnable { @global_queue.grab?(@runnables, divisor: 1) }
-
-        if @event_loop.run(blocking: false)
-          runnable { @runnables.get? }
+        if fiber = run_loop_iteration
+          spin_stop if @spinning.get(:relaxed)
+          @idle = false
+          resume fiber
+        else
+          # the event loop enqueued a fiber (or was interrupted) or the
+          # scheduler was unparked: go for the next iteration
         end
-
-        # nothing to do: start spinning
-        spinning do
-          if @event_loop.run(blocking: false)
-            runnable { @runnables.get? }
-          end
-
-          runnable { @global_queue.grab?(@runnables, divisor: 1) }
-        end
-
-        # block on the event loop, waiting for pending event(s) to activate
-        if blocking { @event_loop.run(blocking: true) }
-          # the event loop enqueued a fiber or was interrupted: restart
-          next
-        end
-
-        # no runnable fiber, no event in the local event loop: go into deep
-        # sleep until another context enqueues a fiber
-        runnable do
-          park_thread do
-            # by the time we acquired the lock, another context may have
-            # enqueued fiber(s) and already tried to wakeup the scheduler
-            # (race). we don't check the scheduler's local queue nor its
-            # event loop (both are empty)
-            if fiber = @global_queue.unsafe_grab?(@runnables, divisor: 1)
-              break fiber
-            end
-          end
-        end
-
-        # immediately mark the scheduler as spinning (we just unparked)
-        @spinning.set(true, :release)
       rescue exception
         Crystal::System.print_error_buffered(
           "BUG: %s#run_loop [%s] crashed with %s (%s)",
@@ -213,23 +183,72 @@ module ExecutionContext
       end
     end
 
-    private macro runnable(&)
-      if %fiber = {{yield}}
-        @spinning.set(false, :release) if @spinning.get(:relaxed)
-        @idle = false
-        resume %fiber
-        next
+    private def run_loop_iteration : Fiber?
+      if fiber = @runnables.get?
+        return fiber
       end
+
+      if fiber = @global_queue.grab?(@runnables, divisor: 1)
+        return fiber
+      end
+
+      if @event_loop.run(blocking: false)
+        if fiber = @runnables.get?
+          return fiber
+        end
+      end
+
+      # nothing to do: start spinning
+      spinning do
+        if @event_loop.run(blocking: false)
+          if fiber = @runnables.get?
+            return fiber
+          end
+        end
+
+        if fiber = @global_queue.grab?(@runnables, divisor: 1)
+          return fiber
+        end
+      end
+
+      # block on the event loop, waiting for pending event(s) to activate
+      if blocking { @event_loop.run(blocking: true) }
+        # the event loop enqueued a fiber or was interrupted: restart
+        return
+      end
+
+      # no runnable fiber, no event in the local event loop: go into deep
+      # sleep until another context enqueues a fiber
+      park_thread do
+        # by the time we acquired the lock, another context may have
+        # enqueued fiber(s) and already tried to wakeup the scheduler
+        # (race). we don't check the scheduler's local queue nor its
+        # event loop (both are empty)
+        if fiber = @global_queue.unsafe_grab?(@runnables, divisor: 1)
+          return fiber
+        end
+      end
+
+      # immediately mark the scheduler as spinning (we just unparked)
+      spin_start
     end
 
     private def spinning(&)
-      @spinning.set(true, :release)
+      spin_start
 
       4.times do |iter|
         yield
         spin_backoff(iter)
       end
 
+      spin_stop
+    end
+
+    private def spin_start : Nil
+      @spinning.set(true, :release)
+    end
+
+    private def spin_stop : Nil
       @spinning.set(false, :release)
     end
 
