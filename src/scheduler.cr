@@ -28,8 +28,6 @@ module ExecutionContext
     #
     # Unsafe. Must only be called on `ExecutionContext.current`. Prefer
     # `ExecutionContext.reschedule` instead.
-    #
-    # FIXME: should the method be `protected` (?)
     protected abstract def enqueue(fiber : Fiber) : Nil
 
     # Suspends the execution of the current fiber and resumes the next runnable
