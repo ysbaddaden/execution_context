@@ -113,7 +113,7 @@ module ExecutionContext
         ExecutionContext::Scheduler.current.enqueue(fiber)
       else
         # cross context: push to global queue
-        Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
+        Crystal.trace :sched, :enqueue, fiber: fiber, to_context: self
         @global_queue.push(fiber)
         wake_scheduler
       end
@@ -143,13 +143,13 @@ module ExecutionContext
           return fiber
         end
 
-        Crystal.trace "sched:parking"
+        Crystal.trace :sched, :parking
         @parked.add(1, :acquire_release)
 
         @condition.wait(@mutex)
 
         @parked.sub(1, :acquire_release)
-        Crystal.trace "sched:wakeup"
+        Crystal.trace :sched, :wakeup
       end
 
       nil

@@ -18,6 +18,7 @@ end
 def sleep(time : Time::Span) : Nil
   raise ArgumentError.new "Sleep time must be positive" if time.negative?
 
+  Crystal.trace :sched, :sleep, for: time.total_nanoseconds.to_i64!
   Fiber.current.resume_event.add(time)
   ExecutionContext.reschedule
 end

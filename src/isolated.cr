@@ -70,13 +70,14 @@ module ExecutionContext
     end
 
     def enqueue(fiber : Fiber) : Nil
-      Crystal.trace "sched:enqueue fiber=%p [%s] ctx=[%s]", fiber.as(Void*), fiber.name, @name
-
       if fiber == @main_fiber
         if ExecutionContext.current == self
           # local enqueue: the event loop is the one pushing
+          Crystal.trace :sched, :enqueue, fiber: fiber
         else
           # cross context communication (e.g. channel, mutex)
+          Crystal.trace :sched, :enqueue, fiber: fiber, to_context: self
+
           @mutex.synchronize do
             @enqueued.set(true, :release)
             @condition.signal if @parked
@@ -89,10 +90,10 @@ module ExecutionContext
     end
 
     protected def reschedule : Nil
-      Crystal.trace "sched:reschedule"
+      Crystal.trace :sched, :reschedule
 
       if @event_loop.run(blocking: true)
-        Crystal.trace "sched:resume"
+        Crystal.trace :sched, :resume
         return
       end
 
@@ -103,7 +104,7 @@ module ExecutionContext
         # avoid a race condition with #enqueue
         return if @enqueued.swap(false, :relaxed)
 
-        Crystal.trace "sched:parking"
+        Crystal.trace :sched, :parking
         @parked = true
 
         @condition.wait(@mutex)
@@ -116,7 +117,7 @@ module ExecutionContext
         raise "BUG: can't resume dead fiber: #{@main_fiber}"
       end
 
-      Crystal.trace "sched:resume"
+      Crystal.trace :sched, :resume
     end
 
     protected def resume(fiber : Fiber) : Nil
@@ -124,7 +125,7 @@ module ExecutionContext
     end
 
     private def run
-      Crystal.trace "sched:started"
+      Crystal.trace :sched, :started
       @func.call
     rescue exception
       Crystal::System.print_error_buffered(

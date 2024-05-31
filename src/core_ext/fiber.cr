@@ -4,6 +4,7 @@ class Fiber
   end
 
   def self.yield : Nil
+    Crystal.trace :sched, :yield
     Fiber.current.resume_event.add(0.seconds)
     ExecutionContext.reschedule
   end
