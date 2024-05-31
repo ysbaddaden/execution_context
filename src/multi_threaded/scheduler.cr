@@ -124,7 +124,7 @@ module ExecutionContext
         loop do
           @idle = true
 
-          if fiber = run_loop_iteration
+          if fiber = find_next_runnable
             spin_stop if @spinning
             @idle = false
             resume fiber
@@ -143,36 +143,29 @@ module ExecutionContext
         end
       end
 
-      private def run_loop_iteration : Fiber?
-        if fiber = @runnables.get?
-          return fiber
+      private def find_next_runnable : Fiber?
+        find_next_runnable do |fiber|
+          return fiber if fiber
         end
+      end
 
-        if fiber = @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
-          return fiber
-        end
+      private def find_next_runnable(&) : Nil
+        yield @runnables.get?
+        yield @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
 
         if @event_loop.run(blocking: false)
-          if fiber = @runnables.get?
-            return fiber
-          end
+          yield @runnables.get?
         end
 
         # nothing to do: start spinning
         spinning do
-          if fiber = try_steal?
-            return fiber
-          end
+          yield try_steal?
 
           if @event_loop.run(blocking: false)
-            if fiber = @runnables.get?
-              return fiber
-            end
+            yield @runnables.get?
           end
 
-          if fiber = @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
-            return fiber
-          end
+          yield @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
         end
 
         # block on the event loop, waiting for pending event(s) to activate
@@ -188,14 +181,10 @@ module ExecutionContext
           # enqueued fiber(s) and already tried to wakeup a thread (race).
           # we don't check the scheduler's local queue nor its event loop
           # (both are empty)
-          if fiber = @execution_context.global_queue.unsafe_grab?(@runnables, divisor: @execution_context.size)
-            return fiber
-          end
+          yield @execution_context.global_queue.unsafe_grab?(@runnables, divisor: @execution_context.size)
 
           # OPTIMIZE: may hold the lock for a while (increasing with threads)
-          if fiber = try_steal?
-            return fiber
-          end
+          yield try_steal?
         end
 
         # immediately mark the scheduler as spinning (we just unparked), there

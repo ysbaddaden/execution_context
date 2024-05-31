@@ -164,7 +164,7 @@ module ExecutionContext
       loop do
         @idle = true
 
-        if fiber = run_loop_iteration
+        if fiber = find_next_runnable
           spin_stop if @spinning.get(:relaxed)
           @idle = false
           resume fiber
@@ -183,32 +183,27 @@ module ExecutionContext
       end
     end
 
-    private def run_loop_iteration : Fiber?
-      if fiber = @runnables.get?
-        return fiber
+    private def find_next_runnable : Fiber?
+      find_next_runnable do |fiber|
+        return fiber if fiber
       end
+    end
 
-      if fiber = @global_queue.grab?(@runnables, divisor: 1)
-        return fiber
-      end
+    private def find_next_runnable(&) : Nil
+      yield @runnables.get?
+      yield @global_queue.grab?(@runnables, divisor: 1)
 
       if @event_loop.run(blocking: false)
-        if fiber = @runnables.get?
-          return fiber
-        end
+        yield @runnables.get?
       end
 
       # nothing to do: start spinning
       spinning do
         if @event_loop.run(blocking: false)
-          if fiber = @runnables.get?
-            return fiber
-          end
+          yield @runnables.get?
         end
 
-        if fiber = @global_queue.grab?(@runnables, divisor: 1)
-          return fiber
-        end
+        yield @global_queue.grab?(@runnables, divisor: 1)
       end
 
       # block on the event loop, waiting for pending event(s) to activate
@@ -224,9 +219,7 @@ module ExecutionContext
         # enqueued fiber(s) and already tried to wakeup the scheduler
         # (race). we don't check the scheduler's local queue nor its
         # event loop (both are empty)
-        if fiber = @global_queue.unsafe_grab?(@runnables, divisor: 1)
-          return fiber
-        end
+        yield @global_queue.unsafe_grab?(@runnables, divisor: 1)
       end
 
       # immediately mark the scheduler as spinning (we just unparked)
