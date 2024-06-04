@@ -48,6 +48,8 @@ module ExecutionContext
       # self.spawn(name: "#{@name}:stackpool-collect") do
       #   stack_pool.collect_loop
       # end
+
+      ExecutionContext.execution_contexts.push(self)
     end
 
     # Starts `count` schedulers and threads.

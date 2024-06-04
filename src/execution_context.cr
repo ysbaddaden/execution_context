@@ -28,6 +28,21 @@ module ExecutionContext
     ENV["CRYSTAL_WORKERS"]?.try(&.to_i?) || Math.min(System.cpu_count.to_i, 32)
   end
 
+  # :nodoc:
+  protected class_getter(execution_contexts) { Thread::LinkedList(ExecutionContext).new }
+
+  # :nodoc:
+  property next : ExecutionContext?
+
+  # :nodoc:
+  property previous : ExecutionContext?
+
+
+  # :nodoc:
+  def self.unsafe_each(&) : Nil
+    @@execution_contexts.try(&.unsafe_each { |execution_context| yield execution_context })
+  end
+
   @[AlwaysInline]
   def self.current : ExecutionContext
     Thread.current.execution_context

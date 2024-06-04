@@ -46,6 +46,7 @@ module ExecutionContext
       end
 
       wg.wait
+      ExecutionContext.execution_contexts.push(self)
     end
 
     @[AlwaysInline]
@@ -137,6 +138,7 @@ module ExecutionContext
         backtrace: exception.backtrace)
     ensure
       @running = false
+      ExecutionContext.execution_contexts.delete(self)
     end
 
     @[AlwaysInline]
