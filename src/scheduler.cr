@@ -86,5 +86,7 @@ module ExecutionContext
     def unblock : NoReturn
       raise NotImplementedError.new("#{self.class.name}#unblock")
     end
+
+    abstract def status : String
   end
 end

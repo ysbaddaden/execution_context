@@ -328,5 +328,19 @@ module ExecutionContext
       object_id.to_s(io, 16)
       io << ' ' << name << '>'
     end
+
+    def status : String
+      if @spinning.get(:relaxed)
+        "spining"
+      elsif @blocked.set?
+        "event-loop"
+      elsif @parked.get(:relaxed)
+        "parked"
+      elsif @idle
+        "idle"
+      else
+        "running"
+      end
+    end
   end
 end
