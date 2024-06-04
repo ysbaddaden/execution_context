@@ -93,7 +93,7 @@ module ExecutionContext
     protected def reschedule : Nil
       Crystal.trace :sched, "reschedule"
 
-      if @event_loop.run(blocking: true)
+      if blocking { @event_loop.run(blocking: true) }
         Crystal.trace :sched, "resume"
         return
       end
@@ -119,6 +119,13 @@ module ExecutionContext
       end
 
       Crystal.trace :sched, "resume"
+    end
+
+    private def blocking(&)
+      @blocked = true
+      yield
+    ensure
+      @blocked = false
     end
 
     protected def resume(fiber : Fiber) : Nil
@@ -150,6 +157,18 @@ module ExecutionContext
       io << "#<" << self.class.name << ":0x"
       object_id.to_s(io, 16)
       io << ' ' << name << '>'
+    end
+
+    def status : String
+      if !@running
+        "terminated"
+      elsif @blocked
+        "event_loop"
+      elsif @parked
+        "parked"
+      else
+        "running"
+      end
     end
   end
 end

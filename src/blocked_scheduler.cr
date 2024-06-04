@@ -14,6 +14,11 @@ module ExecutionContext
     end
 
     @[AlwaysInline]
+    def set? : Bool
+      @flag.get(:relaxed)
+    end
+
+    @[AlwaysInline]
     def trigger? : Bool
       @flag.swap(false, :acquire)
     end

@@ -30,6 +30,7 @@ module ExecutionContext
       @tick : Int32 = 0
       getter? idle : Bool = false
       getter? spinning : Bool = false
+      @parked = false
 
       protected def initialize(@execution_context, @name)
         @runnables = Runnables(256).new(@execution_context.global_queue)
@@ -185,7 +186,11 @@ module ExecutionContext
 
           # OPTIMIZE: may hold the lock for a while (increasing with threads)
           yield try_steal?
+
+          @parked = true
+          nil
         end
+        @parked = false
 
         # immediately mark the scheduler as spinning (we just unparked), there
         # is a race condition (it would be best to mark it _before_ wake up)
@@ -261,6 +266,20 @@ module ExecutionContext
         io << "#<" << self.class.name << ":0x"
         object_id.to_s(io, 16)
         io << ' ' << @name << '>'
+      end
+
+      def status : String
+        if @spinning
+          "spinning"
+        elsif @blocked.set?
+          "event-loop"
+        elsif @parked
+          "parked"
+        elsif @idle
+          "idle"
+        else
+          "running"
+        end
       end
     end
   end
