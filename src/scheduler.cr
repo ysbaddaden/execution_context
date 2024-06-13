@@ -15,7 +15,7 @@ module ExecutionContext
     @[AlwaysInline]
     def spawn(*, name : String? = nil, &block : ->) : Fiber
       Fiber.new(name, execution_context, &block).tap do |fiber|
-        # Crystal.trace :sched, :spawn fiber: fiber
+        # Crystal.trace :sched, "spawn" fiber: fiber
         enqueue(fiber)
       end
     end
