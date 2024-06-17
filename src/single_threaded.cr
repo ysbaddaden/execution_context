@@ -331,7 +331,7 @@ module ExecutionContext
 
     def status : String
       if @spinning.get(:relaxed)
-        "spining"
+        "spinning"
       elsif @blocked.set?
         "event-loop"
       elsif @parked.get(:relaxed)

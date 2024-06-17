@@ -37,7 +37,6 @@ module ExecutionContext
   # :nodoc:
   property previous : ExecutionContext?
 
-
   # :nodoc:
   def self.unsafe_each(&) : Nil
     @@execution_contexts.try(&.unsafe_each { |execution_context| yield execution_context })
