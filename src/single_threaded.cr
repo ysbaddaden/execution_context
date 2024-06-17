@@ -87,18 +87,18 @@ module ExecutionContext
     def enqueue(fiber : Fiber) : Nil
       if ExecutionContext.current == self
         # local enqueue
-        Crystal.trace "sched:enqueue fiber=%p [%s]", fiber.as(Void*), fiber.name
+        Crystal.trace :sched, "enqueue", fiber: fiber
         @runnables.push(fiber)
       else
         # cross context enqueue
-        Crystal.trace "sched:enqueue fiber=%p [%s] context=[%s]", fiber.as(Void*), fiber.name, @name
+        Crystal.trace :sched, "enqueue", fiber: fiber, to_context: self
         @global_queue.push(fiber)
         wake_scheduler
       end
     end
 
     protected def reschedule : Nil
-      Crystal.trace "sched:reschedule"
+      Crystal.trace :sched, "reschedule"
       if fiber = quick_dequeue?
         resume fiber unless fiber == thread.current_fiber
       else
@@ -159,7 +159,7 @@ module ExecutionContext
     end
 
     private def run_loop : Nil
-      Crystal.trace "sched:started"
+      Crystal.trace :sched, "started"
 
       loop do
         @idle = true
@@ -264,7 +264,7 @@ module ExecutionContext
 
     @[AlwaysInline]
     protected def unblock : Nil
-      # Crystal.trace "sched:unblock scheduler=%p [%s]", self.as(Void*), name
+      # Crystal.trace :sched, "unblock", scheduler: self
       @event_loop.interrupt
     end
 
@@ -275,13 +275,13 @@ module ExecutionContext
           return fiber
         end
 
-        Crystal.trace "sched:parking"
+        Crystal.trace :sched, "parking"
         @parked.set(true, :release)
 
         @condition.wait(@mutex)
 
         @parked.set(false, :release)
-        Crystal.trace "sched:wakeup"
+        Crystal.trace :sched, "wakeup"
       end
 
       nil

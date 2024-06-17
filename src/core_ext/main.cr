@@ -5,6 +5,7 @@
 
 module Crystal
   def self.main(&block)
+    Tracing.init
     GC.init
 
     status =
