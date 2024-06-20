@@ -1,4 +1,10 @@
 class Fiber
+  enum Status
+    Suspended
+    Running
+    Dead
+  end
+
   def self.current : Fiber
     Thread.current.current_fiber
   end
@@ -70,6 +76,18 @@ class Fiber
   #   previous_def(stack, thread)
   #   # @execution_context = ExecutionContext.current # <= infinite recursion
   # end
+
+  def status : Status
+    if @alive
+      if @context.@resumable == 1
+        Status::Suspended
+      else
+        Status::Running
+      end
+    else
+      Status::Dead
+    end
+  end
 
   def enqueue : Nil
     execution_context.enqueue(self)
