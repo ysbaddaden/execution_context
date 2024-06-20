@@ -9,6 +9,10 @@ class Thread
     main_fiber.execution_context = execution_context
   end
 
+  def self.each(&) : Nil
+    threads.each { |thread| yield thread }
+  end
+
   # :nodoc:
   def dead_fiber=(@dead_fiber : Fiber) : Fiber
   end

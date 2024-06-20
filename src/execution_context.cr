@@ -42,6 +42,10 @@ module ExecutionContext
     @@execution_contexts.try(&.unsafe_each { |execution_context| yield execution_context })
   end
 
+  def self.each(&) : Nil
+    execution_contexts.each { |execution_context| yield execution_context }
+  end
+
   @[AlwaysInline]
   def self.current : ExecutionContext
     Thread.current.execution_context
