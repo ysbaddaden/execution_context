@@ -9,6 +9,10 @@ class Fiber
     Thread.current.current_fiber
   end
 
+  def self.suspend : Nil
+    ExecutionContext.reschedule
+  end
+
   def self.yield : Nil
     Crystal.trace :sched, "yield"
     Fiber.current.resume_event.add(0.seconds)
