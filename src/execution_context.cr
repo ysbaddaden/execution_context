@@ -3,6 +3,7 @@ require "./scheduler"
 require "./single_threaded"
 require "./isolated"
 require "./multi_threaded"
+require "./monitor"
 
 {% raise "ERROR: execution contexts require the `preview_mt` compilation flag" unless flag?(:preview_mt) %}
 
@@ -21,6 +22,7 @@ module ExecutionContext
     {% else %}
       @@default = SingleThreaded.default
     {% end %}
+    @@monitor = Monitor.new
   end
 
   # Returns the default number of workers to start in the execution context.
@@ -40,6 +42,10 @@ module ExecutionContext
   # :nodoc:
   def self.unsafe_each(&) : Nil
     @@execution_contexts.try(&.unsafe_each { |execution_context| yield execution_context })
+  end
+
+  def self.each(&) : Nil
+    execution_contexts.each { |execution_context| yield execution_context }
   end
 
   @[AlwaysInline]

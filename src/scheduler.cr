@@ -76,6 +76,10 @@ module ExecutionContext
       # well as any other local or instance variables (e.g. we must resolve
       # `Thread.current` again)
 
+      # that being said, we can still trust the `current_fiber` local variable
+      # (it's the only exception)
+      current_fiber.clear_should_yield!
+
       {% unless flag?(:interpreted) %}
         if fiber = Thread.current.dead_fiber?
           fiber.execution_context.stack_pool.release(fiber.@stack)

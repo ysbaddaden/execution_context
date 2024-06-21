@@ -1,12 +1,30 @@
 class Fiber
+  enum Status
+    Suspended
+    Running
+    Dead
+  end
+
   def self.current : Fiber
     Thread.current.current_fiber
+  end
+
+  def self.suspend : Nil
+    ExecutionContext.reschedule
   end
 
   def self.yield : Nil
     Crystal.trace :sched, "yield"
     Fiber.current.resume_event.add(0.seconds)
-    ExecutionContext.reschedule
+    Fiber.suspend
+  end
+
+  def self.maybe_yield : Nil
+    if (current_fiber = Fiber.current).should_yield?
+      Crystal.trace :sched, "yield"
+      current_fiber.resume_event.add(0.seconds)
+      Fiber.suspend
+    end
   end
 
   # def self.timeout(timeout : Time::Span?, select_action : Channel::TimeoutAction? = nil) : Nil
@@ -71,8 +89,44 @@ class Fiber
   #   # @execution_context = ExecutionContext.current # <= infinite recursion
   # end
 
+  def status : Status
+    if @alive
+      if @context.@resumable == 1
+        Status::Suspended
+      else
+        Status::Running
+      end
+    else
+      Status::Dead
+    end
+  end
+
+  @should_yield = Atomic(Bool).new(false)
+
+  # :nodoc:
+  #
+  # returns true if the fiber was already told to yield (but still hasn't)
+  def should_yield! : Bool?
+    if status.running?
+      @should_yield.swap(true, :relaxed)
+    else
+      false
+    end
+  end
+
+  # :nodoc:
+  def should_yield? : Bool
+    @should_yield.get(:relaxed)
+  end
+
+  # :nodoc:
+  def clear_should_yield! : Nil
+    @should_yield.set(false, :relaxed)
+  end
+
   def enqueue : Nil
     execution_context.enqueue(self)
+    Fiber.maybe_yield
   end
 
   def resume : Nil
