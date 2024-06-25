@@ -23,7 +23,7 @@ module ExecutionContext
     )
       @collect_stacks_timer = Timer.new(collect_stacks_every)
       @thread = uninitialized Thread
-      @thread = Thread.new { run_loop }
+      @thread = Thread.new(name: "SYSMON") { run_loop }
       @running_fibers = {} of Scheduler => {Fiber, Int32}
     end
 
@@ -64,7 +64,7 @@ module ExecutionContext
     # TODO: should maybe happen during GC collections (?)
     private def collect_stacks
       Crystal.trace :sched, "collect_stacks" do
-        ExecutionContext.each(&.stack_pool.collect)
+        ExecutionContext.each(&.stack_pool?.try(&.collect))
       end
     end
 

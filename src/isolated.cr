@@ -58,6 +58,10 @@ module ExecutionContext
       raise NotImplementedError.new("No stack pool for isolated contexts")
     end
 
+    def stack_pool? : Fiber::StackPool?
+      nil
+    end
+
     @[AlwaysInline]
     def spawn(*, name : String? = nil, &block : ->) : Fiber
       @spawn_context.spawn(name: name, &block)

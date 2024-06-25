@@ -97,7 +97,9 @@ module ExecutionContext
   abstract def spawn(*, name : String? = nil, same_thread : Bool, &block : ->) : Fiber
 
   abstract def stack_pool : Fiber::StackPool
+  abstract def stack_pool? : Fiber::StackPool?
   # abstract def event_loop : Crystal::EventLoop
+  # abstract def event_loop? : Crystal::EventLoop?
 
   # Enqueues a fiber to be resumed inside the execution context.
   #

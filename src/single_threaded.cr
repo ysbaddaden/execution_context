@@ -46,16 +46,16 @@ module ExecutionContext
       @thread = hijack ? hijack_current_thread : start_thread
       @blocked = BlockedScheduler.new(self)
 
-      # self.spawn(name: "#{@name}:stackpool-collect") do
-      #   stack_pool.collect_loop
-      # end
-
       ExecutionContext.execution_contexts.push(self)
     end
 
     # :nodoc:
     def execution_context : self
       self
+    end
+
+    def stack_pool? : Fiber::StackPool?
+      @stack_pool
     end
 
     # Initializes a scheduler on the current thread (usually the executable's

@@ -45,11 +45,11 @@ module ExecutionContext
 
       start_schedulers(@size, hijack)
 
-      # self.spawn(name: "#{@name}:stackpool-collect") do
-      #   stack_pool.collect_loop
-      # end
-
       ExecutionContext.execution_contexts.push(self)
+    end
+
+    def stack_pool? : Fiber::StackPool?
+      @stack_pool
     end
 
     # Starts `count` schedulers and threads.
