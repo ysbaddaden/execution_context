@@ -192,6 +192,7 @@ module ExecutionContext
     end
 
     private def find_next_runnable(&) : Nil
+      # try queues & the event loop
       yield @runnables.get?
       yield @global_queue.grab?(@runnables, divisor: 1)
 
@@ -209,9 +210,17 @@ module ExecutionContext
       end
 
       # block on the event loop, waiting for pending event(s) to activate
-      if blocking { @event_loop.run(blocking: true) }
-        # the event loop enqueued a fiber or was interrupted: restart
-        return
+      blocking do
+        # there is a time window between stop spinning and start blocking during
+        # which another context may have enqueued a fiber, check again before
+        # blocking on the event loop to avoid missing a runnable fiber
+        # (possible blocking it for a long time):
+        yield @global_queue.grab?(@runnables, divisor: 1)
+
+        if @event_loop.run(blocking: true)
+          # the event loop enqueued a fiber or was interrupted: restart
+          return
+        end
       end
 
       # no runnable fiber, no event in the local event loop: go into deep
@@ -232,8 +241,8 @@ module ExecutionContext
       spin_start
 
       4.times do |iter|
-        yield
         spin_backoff(iter)
+        yield
       end
 
       spin_stop
