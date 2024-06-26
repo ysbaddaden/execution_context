@@ -126,6 +126,12 @@ class Fiber
 
   def enqueue : Nil
     execution_context.enqueue(self)
+    {% if flag?(:win32) %}
+      # OPTIMIZE: we should patch Crystal::IOCP::EventLoop to call
+      #           fiber.execution_context.enqueue(fiber) but the patch would
+      #           copy the whole (huge) #run method...
+      return if ExecutionContext::Scheduler.current.status == "event-loop"
+    {% end %}
     Fiber.maybe_yield
   end
 
