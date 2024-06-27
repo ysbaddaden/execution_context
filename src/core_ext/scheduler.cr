@@ -24,12 +24,14 @@ class Crystal::Scheduler
 
   @[AlwaysInline]
   def self.enqueue(fiber : Fiber) : Nil
-    fiber.enqueue
+    fiber.execution_context.enqueue(fiber)
   end
 
   @[AlwaysInline]
   def self.enqueue(fibers : Enumerable(Fiber)) : Nil
-    fibers.each(&.enqueue)
+    fibers.each do |fiber|
+      fiber.execution_context.enqueue(fiber)
+    end
   end
 
   @[AlwaysInline]
