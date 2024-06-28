@@ -8,11 +8,6 @@ module ExecutionContext
 
     # Fiber scheduler. Owns a thread inside a MT execution context.
     #
-    # Inherits from `ExecutionContext` to be the target for calls to the current
-    # execution context (e.g. local spawn, yield, ...) while the actual
-    # `ExecutionContext::MultiThread` is meant for cross context spawns and
-    # enqueues.
-    #
     # TODO: cooperative shutdown (e.g. when shrinking number of schedulers)
     class Scheduler
       include ExecutionContext::Scheduler
