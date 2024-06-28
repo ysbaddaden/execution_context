@@ -3,6 +3,14 @@ class Fiber
     Suspended
     Running
     Dead
+
+    def to_s : String
+      case self
+      in Suspended then "suspended"
+      in Running then "running"
+      in Dead then "dead"
+      end
+    end
   end
 
   def self.current : Fiber
