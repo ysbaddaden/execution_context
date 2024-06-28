@@ -241,7 +241,7 @@ module ExecutionContext
       spin_start
 
       4.times do |iter|
-        spin_backoff(iter)
+        spin_backoff(iter) unless iter == 0
         yield
       end
 
