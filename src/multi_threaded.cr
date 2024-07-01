@@ -48,8 +48,8 @@ module ExecutionContext
     end
 
     protected def initialize(@name : String, @size : Range(Int32, Int32), hijack : Bool)
-      raise RuntimeError.new("ERROR: needs at least one thread") if @size.end <= 0
-      raise RuntimeError.new("ERROR: needs at least one thread when hijacking a thread") if hijack && @size.begin <= 1
+      raise RuntimeError.new("ERROR: needs at least one thread") if @size.end < 1
+      raise RuntimeError.new("ERROR: needs at least one thread when hijacking a thread") if hijack && @size.begin < 1
 
       @mutex = Thread::Mutex.new
       @condition = Thread::ConditionVariable.new
