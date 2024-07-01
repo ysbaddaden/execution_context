@@ -66,8 +66,8 @@ module ExecutionContext
       @blocked_lock = Crystal::SpinLock.new
       @blocked_list = Crystal::PointerLinkedList(BlockedScheduler).new
 
-      # only start the minimum number of threads
-      start_schedulers(hijack)
+      start_schedulers
+      start_initial_threads(hijack)
 
       ExecutionContext.execution_contexts.push(self)
     end
@@ -84,14 +84,13 @@ module ExecutionContext
       @stack_pool
     end
 
-    # Starts `count` schedulers and threads.
-    # If `hijack` is true: attaches the first scheduler to the current thread,
-    # and starts `count - 1` threads for the rest of the schedulers.
-    private def start_schedulers(hijack)
+    private def start_schedulers
       @size.end.times do |index|
         @schedulers << Scheduler.new(self, name: "#{@name}-#{index}")
       end
+    end
 
+    private def start_initial_threads(hijack)
       @size.begin.times do |index|
         scheduler = @schedulers[index]
 
@@ -103,8 +102,8 @@ module ExecutionContext
       end
     end
 
-    # Initializes a scheduler on the current thread (usually the executable's
-    # main thread).
+    # Attaches *scheduler* to the current `Thread`, usually the executable's
+    # main thread. Starts a `Fiber` to run the run loop.
     private def hijack_current_thread(scheduler, index) : Thread
       Thread.current.tap do |thread|
         Thread.name = scheduler.name
@@ -118,6 +117,8 @@ module ExecutionContext
       end
     end
 
+    # Start a new `Thread` and attaches *scheduler*. Runs the run loop directly
+    # in the thread's main `Fiber`.
     private def start_thread(scheduler, index) : Thread
       Thread.new(name: scheduler.name) do |thread|
         thread.execution_context = self
