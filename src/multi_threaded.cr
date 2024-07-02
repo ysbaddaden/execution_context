@@ -4,6 +4,8 @@ require "./multi_threaded/scheduler"
 
 module ExecutionContext
   # A MT scheduler. Owns multiple threads and starts a scheduler in each one.
+  # The number of threads is dynamic. Setting the minimum and maximum to the
+  # same value will start a fixed number of threads.
   #
   # TODO: M schedulers running on N threads (M <= N)
   # TODO: move a scheduler to another thread (e.g. cpu bound fiber is holding
@@ -13,7 +15,6 @@ module ExecutionContext
     include ExecutionContext
 
     getter name : String
-    getter size : Int32
     getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
     protected getter global_queue : GlobalQueue
 
@@ -22,83 +23,109 @@ module ExecutionContext
 
     # :nodoc:
     def self.default(size : Int32) : self
-      new("DEFAULT", size, hijack: true)
+      new("DEFAULT", 1..size, hijack: true)
     end
 
+    # Starts a context with a maximum number of threads. Threads aren't started
+    # right away, but will be started as needed to increase parallelism up to
+    # the configured maximum.
     def self.new(name : String, size : Int32) : self
+      new(name, 0..size, hijack: false)
+    end
+
+    # Starts a context with a maximum number of threads. Threads aren't started
+    # right away, but will be started as needed to increase parallelism up to
+    # the configured maximum.
+    def self.new(name : String, size : Range(Nil, Int32)) : self
+      new(name, 0..size.end, hijack: false)
+    end
+
+    # Starts a context with a minimum and a maximum number of threads. The
+    # minimum number of threads will be started right away, then threads may be
+    # started as needed to increase parallelism up to the configured maximum.
+    def self.new(name : String, size : Range(Int32, Int32)) : self
       new(name, size, hijack: false)
     end
 
-    protected def initialize(@name : String, @size : Int32, hijack : Bool)
-      raise "ERROR: needs at least one thread" if @size <= 0
+    protected def initialize(@name : String, @size : Range(Int32, Int32), hijack : Bool)
+      raise RuntimeError.new("ERROR: needs at least one thread") if @size.end < 1
+      raise RuntimeError.new("ERROR: needs at least one thread when hijacking a thread") if hijack && @size.begin < 1
 
       @mutex = Thread::Mutex.new
       @condition = Thread::ConditionVariable.new
 
       @global_queue = GlobalQueue.new(@mutex)
-      @schedulers = Array(Scheduler).new(@size)
-      @threads = Array(Thread).new(@size)
+      @schedulers = Array(Scheduler).new(@size.end)
+      @threads = Array(Thread).new(@size.end)
+
       @rng = Random::PCG32.new
 
+      # OPTIMIZE: the linked list won't be needed anymore with a single
+      #           eventloop instance per execution context (an atomic will be
+      #           enough, as in the ST scheduler)
       @blocked_lock = Crystal::SpinLock.new
       @blocked_list = Crystal::PointerLinkedList(BlockedScheduler).new
 
-      start_schedulers(@size, hijack)
+      start_schedulers
+      start_initial_threads(hijack)
 
       ExecutionContext.execution_contexts.push(self)
+    end
+
+    def size : Int32
+      @threads.size
+    end
+
+    def capacity : Int32
+      @size.end
     end
 
     def stack_pool? : Fiber::StackPool?
       @stack_pool
     end
 
-    # Starts `count` schedulers and threads.
-    # If `hijack` if true: setups the first scheduler on the current thread, and
-    # starts `count - 1` threads for the rest of the schedulers.
-    # Blocks the current thread until all threads are started and all schedulers
-    # are fully setup.
-    private def start_schedulers(count, hijack)
-      wg = Thread::WaitGroup.new(count)
+    private def start_schedulers
+      @size.end.times do |index|
+        @schedulers << Scheduler.new(self, name: "#{@name}-#{index}")
+      end
+    end
 
-      @size.times do |index|
-        scheduler = Scheduler.new(self, name: "#{@name}-#{index}")
-        @schedulers << scheduler
+    private def start_initial_threads(hijack)
+      @size.begin.times do |index|
+        scheduler = @schedulers[index]
 
         if hijack && index == 0
           @threads << hijack_current_thread(scheduler, index)
-          wg.done
         else
-          @threads << start_thread(scheduler, index) { wg.done }
+          @threads << start_thread(scheduler, index)
         end
       end
-
-      wg.wait
     end
 
-    # Initializes a scheduler on the current thread (usually the executable's
-    # main thread).
+    # Attaches *scheduler* to the current `Thread`, usually the executable's
+    # main thread. Starts a `Fiber` to run the run loop.
     private def hijack_current_thread(scheduler, index) : Thread
-      thread = Thread.current
-      Thread.name = scheduler.name
-      thread.execution_context = self
-      thread.current_scheduler = scheduler
-      scheduler.thread = thread
+      Thread.current.tap do |thread|
+        Thread.name = scheduler.name
+        thread.execution_context = self
+        thread.current_scheduler = scheduler
+        scheduler.thread = thread
 
-      scheduler.main_fiber = Fiber.new("#{@name}-#{index}:loop", self) do
-        scheduler.run_loop
+        scheduler.main_fiber = Fiber.new("#{@name}-#{index}:loop", self) do
+          scheduler.run_loop
+        end
       end
-
-      thread
     end
 
-    private def start_thread(scheduler, index, &block) : Thread
+    # Start a new `Thread` and attaches *scheduler*. Runs the run loop directly
+    # in the thread's main `Fiber`.
+    private def start_thread(scheduler, index) : Thread
       Thread.new(name: scheduler.name) do |thread|
         thread.execution_context = self
         thread.current_scheduler = scheduler
         scheduler.thread = thread
         scheduler.main_fiber = thread.main_fiber
-        scheduler.main_fiber.name = "#{@name}-#{index}:main"
-        block.call
+        scheduler.main_fiber.name = "#{@name}-#{index}:loop"
         scheduler.run_loop
       end
     end
@@ -130,9 +157,10 @@ module ExecutionContext
       return if @size == 1
 
       i = @rng.next_int
+      size = @schedulers.size
 
-      @size.times do |j|
-        if scheduler = @schedulers[(i &+ j) % @size]?
+      size.times do |j|
+        if scheduler = @schedulers[(i &+ j) % size]?
           yield scheduler unless scheduler.idle?
         end
       end
@@ -164,9 +192,13 @@ module ExecutionContext
     # last thread about to park itself, and we must prevent the last thread from
     # parking when there is a parallel cross context enqueue!
     protected def wake_scheduler : Nil
+      # another thread is spinning: nothing to do (it shall notice the enqueue)
       return if @spinning.get(:acquire) > 0
 
+      # OPTIMIZE: with one eventloop per execution context, we might prefer to
+      #           wakeup a parked thread *before* interrupting the event loop.
       unless @blocked_list.empty?
+        # try to interrupt a thread blocked on the event loop
         if blocked = @blocked_lock.sync { @blocked_list.shift? }
           blocked.value.unblock if blocked.value.trigger?
         end
@@ -180,23 +212,33 @@ module ExecutionContext
       #
       # we still rely on an atomic to make sure the actual value is visible by
       # the current thread
-      return if @parked.get(:acquire) == 0
+      if @parked.get(:acquire) > 0
+        @mutex.synchronize do
+          # OPTIMIZE: relaxed atomics should be enough (we're inside a mutex
+          #           that shall already deal with memory order
+          return if @parked.get(:acquire) == 0
+          return if @spinning.get(:acquire) > 0
+
+          # increase the number of spinning threads _now_ to avoid multiple
+          # threads from trying to wakeup multiple threads at the same time
+          @spinning.add(1, :acquire_release)
+
+          # wakeup a thread
+          @condition.signal
+        end
+        return
+      end
+
+      # shall we start another thread?
+      # no need for atomics, the values shall be rather stable ovber time and
+      # we check them again inside the mutex.
+      return if @threads.size == @size.end
 
       @mutex.synchronize do
-        # OPTIMIZE: would :relaxed atomics be enough?
-        return if @parked.get(:acquire) == 0
-        return if @spinning.get(:acquire) > 0
+        index = @threads.size
+        return if index == @size.end # check again (protect against races)
 
-        # OPTIMIZE: potential thundering herd issue: we can't target a specific
-        #           scheduler to unpark, which means we may have multiple
-        #           enqueues try to wakeup multiple threads before a scheduler
-        #           is given the chance to mark itself as spinning.
-        #
-        #           maybe we could take control of the list, which would allow
-        #           to mark the scheduler as spinning before we even resume it,
-        #           along with a check that we only wake 1 scheduler thread at a
-        #           time (not multiple).
-        @condition.signal
+        @threads << start_thread(@schedulers[index], index)
       end
     end
 

@@ -23,7 +23,7 @@ module ExecutionContext
       getter event_loop : Crystal::EventLoop
 
       @tick : Int32 = 0
-      getter? idle : Bool = false
+      getter? idle : Bool = true
       getter? spinning : Bool = false
       @parked = false
 
@@ -47,7 +47,7 @@ module ExecutionContext
       protected def enqueue(fiber : Fiber) : Nil
         Crystal.trace :sched, "enqueue", fiber: fiber
         @runnables.push(fiber)
-        @execution_context.wake_scheduler unless @execution_context.size == 1
+        @execution_context.wake_scheduler unless @execution_context.capacity == 1
       end
 
       protected def reschedule : Nil
@@ -196,11 +196,10 @@ module ExecutionContext
         end
         @parked = false
 
-        # immediately mark the scheduler as spinning (we just unparked), there
-        # is a race condition (it would be best to mark it _before_ wake up)
-        # but it should avoid too many threads being awoken in parallel (we
-        # don't need many spinning scheduler threads):
-        spin_start
+        # immediately mark the scheduler as spinning (we just unparked);
+        # we don't increment the number of spinning threads since
+        # MultiThread#wake_scheduler already did before unparking the thread.
+        @spinning = true
       end
 
       # OPTIMIZE: skip spinning if spinning >= running/2
