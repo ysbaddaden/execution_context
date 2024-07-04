@@ -80,6 +80,8 @@ module ExecutionContext
       # ported from Go: globrunqget
       return if @size == 0
 
+      divisor = 1 if divisor < 1
+
       n = {
         @size,                   # can't grab more than available
         @size // divisor + 1,    # divide + try to take at least 1 fiber

@@ -101,6 +101,20 @@ describe ExecutionContext::GlobalQueue do
       # had nothing left to dequeue
       runnables.size.should eq(0)
     end
+
+    it "clamps divisor to 1" do
+      f = Fiber.new { }
+      q = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
+      q.unsafe_push(f)
+
+      # dequeues the unique fiber
+      runnables = FakeRunnables.new(6)
+      fiber = q.unsafe_grab?(runnables, 0)
+      fiber.should be(f)
+
+      # had nothing left to dequeue
+      runnables.size.should eq(0)
+    end
   end
 
   describe "thread safety" do
