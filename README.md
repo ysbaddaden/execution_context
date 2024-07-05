@@ -40,9 +40,9 @@ The shard will monkey-patch many things into Crystal's stdlib as much as
 possible, yet there are a couple changes that requires to patch the stdlib
 directly.
 
-The patches are in the `/patches` folder of the shard and must be applied on top
+~~The patches are in the `/patches` folder of the shard and must be applied on top
 of Crystal HEAD. I recommend to clone the Git repository on your local, and to
-keep it up to date:
+keep it up to date:~~
 
 ```console
 $ git clone https://github.com/crystal-lang/crystal.git
@@ -50,6 +50,8 @@ $ cd crystal
 $ for f in /path/to/execution_context/patches/*; do patch -p1 $f; done
 ```
 
+Said patches have been merged and shall be released with Crystal 1.13.0. Maybe
+further changes will need patches again, though.
 
 ## Usage
 
