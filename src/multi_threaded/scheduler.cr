@@ -23,11 +23,11 @@ module ExecutionContext
       getter event_loop : Crystal::EventLoop
 
       @tick : Int32 = 0
-      getter? idle : Bool = true
+      getter? idle : Bool
       getter? spinning : Bool = false
       @parked = false
 
-      protected def initialize(@execution_context, @name)
+      protected def initialize(@execution_context, @name, @idle = true)
         @runnables = Runnables(256).new(@execution_context.global_queue)
         @event_loop = Crystal::EventLoop.create
         @blocked = uninitialized BlockedScheduler

@@ -66,7 +66,7 @@ module ExecutionContext
       @blocked_lock = Crystal::SpinLock.new
       @blocked_list = Crystal::PointerLinkedList(BlockedScheduler).new
 
-      start_schedulers
+      start_schedulers(hijack)
       start_initial_threads(hijack)
 
       ExecutionContext.execution_contexts.push(self)
@@ -84,9 +84,9 @@ module ExecutionContext
       @stack_pool
     end
 
-    private def start_schedulers
+    private def start_schedulers(hijack)
       @size.end.times do |index|
-        @schedulers << Scheduler.new(self, name: "#{@name}-#{index}")
+        @schedulers << Scheduler.new(self, "#{@name}-#{index}", idle: !hijack || index != 0)
       end
     end
 
