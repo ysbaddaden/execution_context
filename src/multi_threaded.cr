@@ -154,13 +154,13 @@ module ExecutionContext
     # end
 
     protected def steal(&) : Nil
-      return if @size == 1
+      return if size == 1
 
       i = @rng.next_int
-      size = @schedulers.size
+      n = @schedulers.size
 
-      size.times do |j|
-        if scheduler = @schedulers[(i &+ j) % size]?
+      n.times do |j|
+        if scheduler = @schedulers[(i &+ j) % n]?
           yield scheduler unless scheduler.idle?
         end
       end
