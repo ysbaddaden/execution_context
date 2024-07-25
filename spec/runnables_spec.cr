@@ -217,7 +217,7 @@ describe ExecutionContext::Runnables do
       0.step(to: fibers.size - 1, by: 9) do |i|
         q = ExecutionContext::Queue.new(nil, nil)
         9.times { |j| q.push(fibers[i + j].@fiber) }
-        global_queue.push(pointerof(q), 9)
+        global_queue.bulk_push(pointerof(q), 9)
         Thread.sleep(10.nanoseconds) if i % 2 == 1
       end
 

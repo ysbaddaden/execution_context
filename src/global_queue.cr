@@ -29,17 +29,13 @@ module ExecutionContext
 
     # Grabs the lock and puts a runnable fiber on the global runnable queue.
     # `size` is the number of fibers in `queue`.
-    #
-    # TODO: rename as `#bulk_push`
-    def push(queue : Queue*, size : Int32) : Nil
-      @mutex.synchronize { unsafe_push(queue, size) }
+    def bulk_push(queue : Queue*, size : Int32) : Nil
+      @mutex.synchronize { unsafe_bulk_push(queue, size) }
     end
 
     # Puts a runnable fiber on the global runnable queue. Assumes the lock is
     # currently held. `size` is the number of fibers in `queue`.
-    #
-    # TODO: rename as `#unsafe_bulk_push`
-    def unsafe_push(queue : Queue*, size : Int32) : Nil
+    def unsafe_bulk_push(queue : Queue*, size : Int32) : Nil
       # ported from Go: globrunqputbatch
       @queue.bulk_unshift(queue)
       @size += size

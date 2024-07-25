@@ -188,7 +188,7 @@ describe ExecutionContext::GlobalQueue do
 
           reenqueue = ->{
             if size > 0
-              queue.push(pointerof(batch), size)
+              queue.bulk_push(pointerof(batch), size)
               names = [] of String?
               batch.each { |f| names << f.name }
               batch.clear
@@ -241,7 +241,7 @@ describe ExecutionContext::GlobalQueue do
       0.step(to: fibers.size - 1, by: 5) do |i|
         q = ExecutionContext::Queue.new(nil, nil)
         5.times { |j| q.push(fibers[i + j].@fiber) }
-        queue.push(pointerof(q), 5)
+        queue.bulk_push(pointerof(q), 5)
         Thread.sleep(10.nanoseconds) if i % 4 == 3
       end
 

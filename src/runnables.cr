@@ -79,7 +79,7 @@ module ExecutionContext
       queue = Queue.new(batch.to_unsafe[0], batch.to_unsafe[n])
 
       # now put the batch on global queue (grabs the global lock)
-      @global_queue.push(pointerof(queue), (n &+ 1).to_i32)
+      @global_queue.bulk_push(pointerof(queue), (n &+ 1).to_i32)
 
       true
     end
@@ -106,7 +106,7 @@ module ExecutionContext
       @tail.set(tail, :release)
 
       # put any overflow on global queue
-      @global_queue.push(queue, size) if size > 0
+      @global_queue.bulk_push(queue, size) if size > 0
     end
 
     # Dequeues the next runnable fiber from the local queue.
