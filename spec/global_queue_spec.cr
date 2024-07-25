@@ -183,12 +183,12 @@ describe ExecutionContext::GlobalQueue do
 
           r = FakeRunnables.new(rand(3..12))
 
-          batch = ExecutionContext::Queue.new(nil, nil)
+          batch = ExecutionContext::Queue.new
           size = 0
 
           reenqueue = ->{
             if size > 0
-              queue.bulk_push(pointerof(batch), size)
+              queue.bulk_push(pointerof(batch))
               names = [] of String?
               batch.each { |f| names << f.name }
               batch.clear
@@ -239,9 +239,9 @@ describe ExecutionContext::GlobalQueue do
 
       # enqueue in batches of 5
       0.step(to: fibers.size - 1, by: 5) do |i|
-        q = ExecutionContext::Queue.new(nil, nil)
+        q = ExecutionContext::Queue.new
         5.times { |j| q.push(fibers[i + j].@fiber) }
-        queue.bulk_push(pointerof(q), 5)
+        queue.bulk_push(pointerof(q))
         Thread.sleep(10.nanoseconds) if i % 4 == 3
       end
 

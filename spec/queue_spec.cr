@@ -27,7 +27,7 @@ describe ExecutionContext::Queue do
 
   describe "#push" do
     it "to head" do
-      q = ExecutionContext::Queue.new(nil, nil)
+      q = ExecutionContext::Queue.new
       f1 = Fiber.new(name: "f1") { }
       f2 = Fiber.new(name: "f2") { }
       f3 = Fiber.new(name: "f3") { }

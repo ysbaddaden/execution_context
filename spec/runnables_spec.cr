@@ -73,28 +73,28 @@ describe ExecutionContext::Runnables do
 
   describe "#bulk_push" do
     it "fills the local queue" do
-      q = ExecutionContext::Queue.new(nil, nil)
+      q = ExecutionContext::Queue.new
       fibers = 4.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
       fibers.each { |f| q.push(f) }
 
       # local enqueue
       g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       r = ExecutionContext::Runnables(4).new(g)
-      r.bulk_push(pointerof(q), 4)
+      r.bulk_push(pointerof(q))
 
       fibers.reverse_each { |f| r.get?.should be(f) }
       g.empty?.should be_true
     end
 
     it "pushes the overflow to the global queue" do
-      q = ExecutionContext::Queue.new(nil, nil)
+      q = ExecutionContext::Queue.new
       fibers = 7.times.map { |i| Fiber.new(name: "f#{i}") { } }.to_a
       fibers.each { |f| q.push(f) }
 
       # local enqueue + overflow
       g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
       r = ExecutionContext::Runnables(4).new(g)
-      r.bulk_push(pointerof(q), 5)
+      r.bulk_push(pointerof(q))
 
       # filled the local queue
       r.get?.should eq(fibers[6])
@@ -215,9 +215,9 @@ describe ExecutionContext::Runnables do
 
       # enqueue in batches
       0.step(to: fibers.size - 1, by: 9) do |i|
-        q = ExecutionContext::Queue.new(nil, nil)
+        q = ExecutionContext::Queue.new
         9.times { |j| q.push(fibers[i + j].@fiber) }
-        global_queue.bulk_push(pointerof(q), 9)
+        global_queue.bulk_push(pointerof(q))
         Thread.sleep(10.nanoseconds) if i % 2 == 1
       end
 

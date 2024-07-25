@@ -76,10 +76,10 @@ module ExecutionContext
       n.times do |i|
         batch.to_unsafe[i].schedlink = batch.to_unsafe[i &+ 1]
       end
-      queue = Queue.new(batch.to_unsafe[0], batch.to_unsafe[n])
+      queue = Queue.new(batch.to_unsafe[0], batch.to_unsafe[n], size: (n &+ 1).to_i32)
 
       # now put the batch on global queue (grabs the global lock)
-      @global_queue.bulk_push(pointerof(queue), (n &+ 1).to_i32)
+      @global_queue.bulk_push(pointerof(queue))
 
       true
     end
@@ -89,9 +89,8 @@ module ExecutionContext
     # case this will temporarily acquire the global queue lock.
     #
     # Executed only by the owner.
-    def bulk_push(queue : Queue*, size : Int32) : Nil
+    def bulk_push(queue : Queue*) : Nil
       # ported from Go: runqputbatch
-
       head = @head.get(:acquire) # sync with other consumers
       tail = @tail.get(:relaxed)
 
@@ -99,14 +98,13 @@ module ExecutionContext
         fiber = queue.value.pop
         @buffer.to_unsafe[tail % N] = fiber
         tail &+= 1
-        size &-= 1
       end
 
       # make the fibers available for consumption
       @tail.set(tail, :release)
 
       # put any overflow on global queue
-      @global_queue.bulk_push(queue, size) if size > 0
+      @global_queue.bulk_push(queue) unless queue.value.empty?
     end
 
     # Dequeues the next runnable fiber from the local queue.

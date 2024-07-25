@@ -11,8 +11,7 @@ module ExecutionContext
   # Ported from Go's `globrunq*` functions.
   class GlobalQueue
     def initialize(@mutex : Thread::Mutex)
-      @queue = Queue.new(nil, nil)
-      @size = 0
+      @queue = Queue.new
     end
 
     # Grabs the lock and enqueues a runnable fiber on the global runnable queue.
@@ -24,21 +23,18 @@ module ExecutionContext
     # is currently held.
     def unsafe_push(fiber : Fiber) : Nil
       @queue.push(fiber)
-      @size += 1
     end
 
     # Grabs the lock and puts a runnable fiber on the global runnable queue.
-    # `size` is the number of fibers in `queue`.
-    def bulk_push(queue : Queue*, size : Int32) : Nil
-      @mutex.synchronize { unsafe_bulk_push(queue, size) }
+    def bulk_push(queue : Queue*) : Nil
+      @mutex.synchronize { unsafe_bulk_push(queue) }
     end
 
     # Puts a runnable fiber on the global runnable queue. Assumes the lock is
-    # currently held. `size` is the number of fibers in `queue`.
-    def unsafe_bulk_push(queue : Queue*, size : Int32) : Nil
+    # currently held.
+    def unsafe_bulk_push(queue : Queue*) : Nil
       # ported from Go: globrunqputbatch
       @queue.bulk_unshift(queue)
-      @size += size
     end
 
     # Grabs the lock and dequeues one runnable fiber from the global runnable
@@ -50,10 +46,7 @@ module ExecutionContext
     # Dequeues one runnable fiber from the global runnable queue. Assumes the
     # lock is currently held.
     def unsafe_pop? : Fiber?
-      if fiber = @queue.pop?
-        @size -= 1
-        fiber
-      end
+      @queue.pop?
     end
 
     # Grabs the lock then tries to grab a batch of fibers from the global
@@ -74,17 +67,17 @@ module ExecutionContext
     # execution context; it should be the number of threads.
     def unsafe_grab?(runnables, divisor : Int32) : Fiber?
       # ported from Go: globrunqget
-      return if @size == 0
+      return if @queue.empty?
 
       divisor = 1 if divisor < 1
+      size = @queue.size
 
       n = {
-        @size,                   # can't grab more than available
-        @size // divisor + 1,    # divide + try to take at least 1 fiber
+        size,                   # can't grab more than available
+        size // divisor + 1,    # divide + try to take at least 1 fiber
         runnables.capacity // 2, # refill half the destination queue
       }.min
 
-      @size -= n
       fiber = @queue.pop?
 
       # OPTIMIZE: q = @queue.split(n - 1) then `runnables.push(pointerof(q))` (?)
@@ -98,12 +91,12 @@ module ExecutionContext
 
     @[AlwaysInline]
     def empty? : Bool
-      @size == 0
+      @queue.empty?
     end
 
     @[AlwaysInline]
     def size : Int32
-      @size
+      @queue.size
     end
   end
 end
