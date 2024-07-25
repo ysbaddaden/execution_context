@@ -8,13 +8,16 @@ module ExecutionContext
   # TODO: rename as Fiber::Queue (?)
   # TODO: LIFO semantic is weird (inherited from Go's gQueue); shall we consider FIFO instead?
   struct Queue
-    def initialize(@head : Fiber?, @tail : Fiber?)
+    getter size : Int32
+
+    def initialize(@head : Fiber? = nil, @tail : Fiber? = nil, @size = 0)
     end
 
     def push(fiber : Fiber) : Nil
       fiber.schedlink = @head
       @head = fiber
       @tail = fiber if @tail.nil?
+      @size += 1
     end
 
     def bulk_unshift(queue : Queue*) : Nil
@@ -27,6 +30,8 @@ module ExecutionContext
         @head = queue.value.@head
       end
       @tail = queue.value.@tail
+
+      @size += queue.value.size
     end
 
     @[AlwaysInline]
@@ -43,6 +48,7 @@ module ExecutionContext
       if fiber = @head
         @head = fiber.schedlink
         @tail = nil if @head.nil?
+        @size -= 1
         fiber.schedlink = nil
         fiber
       else
@@ -56,6 +62,7 @@ module ExecutionContext
     end
 
     def clear
+      @size = 0
       @head = @tail = nil
     end
 

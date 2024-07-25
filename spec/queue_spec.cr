@@ -4,9 +4,10 @@ require "../src/queue"
 describe ExecutionContext::Queue do
   describe "#initialize" do
     it "creates an empty queue" do
-      q = ExecutionContext::Queue.new(nil, nil)
+      q = ExecutionContext::Queue.new
       q.@head.should be_nil
       q.@tail.should be_nil
+      q.size.should eq(0)
       q.empty?.should be_true
     end
 
@@ -16,9 +17,10 @@ describe ExecutionContext::Queue do
       f1.schedlink = f2
       f2.schedlink = nil
 
-      q = ExecutionContext::Queue.new(f2, f1)
+      q = ExecutionContext::Queue.new(f2, f1, size: 2)
       q.@head.should be(f2)
       q.@tail.should be(f1)
+      q.size.should eq(2)
       q.empty?.should be_false
     end
   end
@@ -39,6 +41,7 @@ describe ExecutionContext::Queue do
       q.@head.should be(f1)
       q.@tail.should be(f1)
       f1.schedlink.should be_nil
+      q.size.should eq(1)
 
       # push second fiber
       q.push(f2)
@@ -46,6 +49,7 @@ describe ExecutionContext::Queue do
       q.@tail.should be(f1)
       f2.schedlink.should be(f1)
       f1.schedlink.should be_nil
+      q.size.should eq(2)
 
       # push third fiber
       q.push(f3)
@@ -54,6 +58,7 @@ describe ExecutionContext::Queue do
       f3.schedlink.should be(f2)
       f2.schedlink.should be(f1)
       f1.schedlink.should be_nil
+      q.size.should eq(3)
     end
   end
 
@@ -66,13 +71,14 @@ describe ExecutionContext::Queue do
       f3.schedlink = f2
       f2.schedlink = f1
       f1.schedlink = nil
-      q1 = ExecutionContext::Queue.new(f3, f1)
+      q1 = ExecutionContext::Queue.new(f3, f1, size: 3)
 
       # push in bulk
-      q2 = ExecutionContext::Queue.new(nil, nil)
+      q2 = ExecutionContext::Queue.new(nil, nil, size: 0)
       q2.bulk_unshift(pointerof(q1))
       q2.@head.should be(f3)
       q2.@tail.should be(f1)
+      q2.size.should eq(3)
     end
 
     it "to filled queue" do
@@ -86,17 +92,18 @@ describe ExecutionContext::Queue do
       f3.schedlink = f2
       f2.schedlink = f1
       f1.schedlink = nil
-      q1 = ExecutionContext::Queue.new(f3, f1)
+      q1 = ExecutionContext::Queue.new(f3, f1, size: 3)
 
       # destination queue
       f5.schedlink = f4
       f4.schedlink = nil
-      q2 = ExecutionContext::Queue.new(f5, f4)
+      q2 = ExecutionContext::Queue.new(f5, f4, size: 2)
 
       # push in bulk
       q2.bulk_unshift(pointerof(q1))
       q2.@head.should be(f5)
       q2.@tail.should be(f1)
+      q2.size.should eq(5)
 
       f5.schedlink.should be(f4)
       f4.schedlink.should be(f3)
@@ -114,25 +121,29 @@ describe ExecutionContext::Queue do
       f3.schedlink = f2
       f2.schedlink = f1
       f1.schedlink = nil
-      q = ExecutionContext::Queue.new(f3, f1)
+      q = ExecutionContext::Queue.new(f3, f1, size: 3)
 
       # removes third element
       q.pop.should be(f3)
       q.@head.should be(f2)
       q.@tail.should be(f1)
+      q.size.should eq(2)
 
       # removes second element
       q.pop.should be(f2)
       q.@head.should be(f1)
       q.@tail.should be(f1)
+      q.size.should eq(1)
 
       # removes first element
       q.pop.should be(f1)
       q.@head.should be_nil
       q.@tail.should be_nil
+      q.size.should eq(0)
 
       # empty queue
       expect_raises(IndexError) { q.pop }
+      q.size.should eq(0)
     end
   end
 
@@ -144,25 +155,29 @@ describe ExecutionContext::Queue do
       f3.schedlink = f2
       f2.schedlink = f1
       f1.schedlink = nil
-      q = ExecutionContext::Queue.new(f3, f1)
+      q = ExecutionContext::Queue.new(f3, f1, size: 3)
 
       # removes third element
       q.pop?.should be(f3)
       q.@head.should be(f2)
       q.@tail.should be(f1)
+      q.size.should eq(2)
 
       # removes second element
       q.pop?.should be(f2)
       q.@head.should be(f1)
       q.@tail.should be(f1)
+      q.size.should eq(1)
 
       # removes first element
       q.pop?.should be(f1)
       q.@head.should be_nil
       q.@tail.should be_nil
+      q.size.should eq(0)
 
       # empty queue
       q.pop?.should be_nil
+      q.size.should eq(0)
     end
   end
 end
