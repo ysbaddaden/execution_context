@@ -4,7 +4,6 @@
 require "http/client"
 require "option_parser"
 
-
 address = "localhost:8080"
 duration = 30.seconds
 requests = 12
@@ -37,7 +36,7 @@ end
 
 start = Time.local
 
-successes = Channel({Int32,Int64}).new(fibers)
+successes = Channel({Int32, Int64}).new(fibers)
 
 fibers.times do
   spawn do
@@ -71,4 +70,4 @@ fibers.times do
   total_bytes += bytes
 end
 
-puts "Total requests: #{total_successes}\nTotal bytes: #{total_bytes.humanize}"
+puts "Total requests: #{total_successes}\nTotal bytes read: #{total_bytes.humanize}"
