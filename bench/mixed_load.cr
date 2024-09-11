@@ -4,17 +4,6 @@
 require "http/server"
 require "big"
 
-def fibonacci(n) : BigInt
-  a = BigInt.new(0)
-  b = BigInt.new(1)
-  n.times do
-    temp = a
-    a = b
-    b = temp + b
-  end
-  a
-end
-
 def take_some_time(n)
   count = BigInt.new 0
   while Time.local < n
