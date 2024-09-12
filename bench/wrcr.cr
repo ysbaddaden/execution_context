@@ -8,9 +8,13 @@ address = "localhost:8080"
 duration = 30.seconds
 requests = 12
 fibers = 20
+threads = 4
 
 OptionParser.parse do |parser|
-  parser.banner = "Usage: wrcr [arguments]\nNote: The number of threads is set by the CRYSTAL_WORKERS environment variable."
+  parser.banner = "Usage: wrcr [arguments]"
+  {% if flag?(:ec) && flag?(:mt) %}
+    parser.on("-t NUMBER", "--threads=NUMBER", "Number of total threads. Defaults to #{threads}") { |thrs| threads = thrs.to_i }
+  {% end %}
   parser.on("-f NUMBER", "--fibers=NUMBER", "Number of total fibers. Defaults to #{fibers}") { |fbrs| fibers = fbrs.to_i }
   parser.on("-r NUMBER", "--requests=NUMBER", "Number of requests before closing the connection. Defaults to #{requests}") { |req| requests = req.to_i }
   parser.on("-d NUMBER", "--duration=NUMBER", "Duration of the test. Defaults to #{duration} seconds") { |dur| duration = dur.to_i.seconds }
@@ -25,6 +29,10 @@ OptionParser.parse do |parser|
     exit(1)
   end
 end
+
+{% if flag?(:ec) && flag?(:mt) %}
+  ExecutionContext::MultiThreaded.default threads
+{% end %}
 
 address = address.gsub("http://", "")
 if address.includes? ":"
