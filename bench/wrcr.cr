@@ -17,7 +17,7 @@ OptionParser.parse do |parser|
   {% end %}
   parser.on("-f NUMBER", "--fibers=NUMBER", "Number of total fibers. Defaults to #{fibers}") { |fbrs| fibers = fbrs.to_i }
   parser.on("-r NUMBER", "--requests=NUMBER", "Number of requests before closing the connection. Defaults to #{requests}") { |req| requests = req.to_i }
-  parser.on("-d NUMBER", "--duration=NUMBER", "Duration of the test. Defaults to #{duration} seconds") { |dur| duration = dur.to_i.seconds }
+  parser.on("-d NUMBER", "--duration=NUMBER", "Duration of the test. Defaults to #{duration.total_seconds.to_i} seconds") { |dur| duration = dur.to_i.seconds }
   parser.on("-u URL", "--url=URL", "Specifies the address of the server. Defaults to #{address}") { |url| address = url }
   parser.on("-h", "--help", "Show this help") do
     puts parser
