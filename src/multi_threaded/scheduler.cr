@@ -19,9 +19,6 @@ module ExecutionContext
 
       @runnables : Runnables(256)
 
-      # TODO: should eventually have one EL per EC
-      getter event_loop : Crystal::EventLoop
-
       @tick : Int32 = 0
       getter? idle : Bool
       getter? spinning : Bool = false
@@ -29,7 +26,6 @@ module ExecutionContext
 
       protected def initialize(@execution_context, @name, @idle = true)
         @runnables = Runnables(256).new(@execution_context.global_queue)
-        @event_loop = Crystal::EventLoop.create
         @blocked = uninitialized BlockedScheduler
         @blocked = BlockedScheduler.new(self)
       end
@@ -150,7 +146,7 @@ module ExecutionContext
         yield @runnables.get?
         yield @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
 
-        if @event_loop.run(blocking: false)
+        if @execution_context.event_loop.try_run?(blocking: false)
           yield @runnables.get?
         end
 
@@ -158,7 +154,7 @@ module ExecutionContext
         spinning do
           yield try_steal?
 
-          if @event_loop.run(blocking: false)
+          if @execution_context.event_loop.try_run?(blocking: false)
             yield @runnables.get?
           end
 
@@ -173,14 +169,15 @@ module ExecutionContext
           # (possible blocking it for a long time):
           yield @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
 
-          if @event_loop.run(blocking: true)
+          if @execution_context.event_loop.try_run?(blocking: true)
             # the event loop enqueud a fiber or was interrupted: restart
             return
           end
         end
 
-        # no runnable fiber, no event in the local event loop: go into deep
-        # sleep until another scheduler or another context enqueues a fiber
+        # no runnable fiber, no event in the event loop or another thread is
+        # already running the event loop: go into deep sleep until another
+        # scheduler or another context enqueues a fiber
         @execution_context.park_thread do
           # by the time we acquired the lock, another thread may have
           # enqueued fiber(s) and already tried to wakeup a thread (race).
@@ -257,7 +254,7 @@ module ExecutionContext
       @[AlwaysInline]
       protected def unblock : Nil
         # Crystal.trace :sched, "unblock", scheduler: self
-        @event_loop.interrupt
+        @execution_context.event_loop.interrupt
       end
 
       @[AlwaysInline]

@@ -171,7 +171,7 @@ module ExecutionContext
       if !@running
         "terminated"
       elsif @waiting
-        "event_loop"
+        "event-loop"
       elsif @parked
         "parked"
       else

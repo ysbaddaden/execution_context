@@ -148,11 +148,6 @@ module ExecutionContext
       end
     end
 
-    # TODO: there should be one event loop per execution context (not per scheduler)
-    # def event_loop : Crystal::EventLoop
-    #   raise "BUG: call #{self.class.name}#Scheduler#event_loop instead of #{self.class.name}#event_loop"
-    # end
-
     protected def steal(&) : Nil
       return if size == 1
 

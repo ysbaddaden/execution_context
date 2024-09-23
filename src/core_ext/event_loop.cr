@@ -1,12 +1,11 @@
 abstract class Crystal::EventLoop
   @[AlwaysInline]
   def self.current : self
-    # ExecutionContext.current.event_loop
-    ExecutionContext::Scheduler.current.event_loop
+    ExecutionContext.current.event_loop
   end
 end
 
-{% if flag?(:unix) %}
+{% if flag?(:unix) && flag?(:evloop_libevent) %}
   class Crystal::LibEvent::EventLoop
     # Create a new resume event for a fiber.
     def create_resume_event(fiber : Fiber) : Crystal::EventLoop::Event
