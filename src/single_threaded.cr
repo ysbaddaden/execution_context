@@ -1,4 +1,3 @@
-require "./blocked_scheduler"
 require "./global_queue"
 require "./runnables"
 
@@ -19,6 +18,7 @@ module ExecutionContext
     @runnables : Runnables(256)
 
     getter? idle : Bool = false
+    @waiting = Atomic(Bool).new(false)
     @parked = Atomic(Bool).new(false)
     @spinning = Atomic(Bool).new(false)
     @tick : Int32 = 0
@@ -41,10 +41,8 @@ module ExecutionContext
 
       @thread = uninitialized Thread
       @main_fiber = uninitialized Fiber
-      @blocked = uninitialized BlockedScheduler
 
       @thread = hijack ? hijack_current_thread : start_thread
-      @blocked = BlockedScheduler.new(self)
 
       ExecutionContext.execution_contexts.push(self)
     end
@@ -210,11 +208,11 @@ module ExecutionContext
       end
 
       # block on the event loop, waiting for pending event(s) to activate
-      blocking do
-        # there is a time window between stop spinning and start blocking during
+      waiting do
+        # there is a time window between stop spinning and start waiting during
         # which another context may have enqueued a fiber, check again before
-        # blocking on the event loop to avoid missing a runnable fiber
-        # (possible blocking it for a long time):
+        # waiting on the event loop to avoid missing a runnable fiber which (may
+        # block for a long time):
         yield @global_queue.grab?(@runnables, divisor: 1)
 
         if @event_loop.run(blocking: true)
@@ -264,19 +262,13 @@ module ExecutionContext
     end
 
     @[AlwaysInline]
-    private def blocking(&)
-      @blocked.set
+    private def waiting(&)
+      @waiting.set(true, :release)
       begin
         yield
       ensure
-        @blocked.trigger?
+        @waiting.set(false, :release)
       end
-    end
-
-    @[AlwaysInline]
-    protected def unblock : Nil
-      # Crystal.trace :sched, "unblock", scheduler: self
-      @event_loop.interrupt
     end
 
     private def park_thread : Fiber?
@@ -302,13 +294,13 @@ module ExecutionContext
     #
     # This is called from another context _after_ enqueueing into the global
     # queue to try and wakeup the ST thread running in parallel that may be
-    # running, spinning, blocked or parked.
+    # running, spinning, waiting or parked.
     private def wake_scheduler : Nil
       # return unless @idle
       return if @spinning.get(:acquire)
 
-      if @blocked.trigger?
-        @blocked.unblock
+      if @waiting.get(:acquire)
+        @event_loop.interrupt
         return
       end
 
@@ -341,7 +333,7 @@ module ExecutionContext
     def status : String
       if @spinning.get(:relaxed)
         "spinning"
-      elsif @blocked.set?
+      elsif @waiting.get(:relaxed)
         "event-loop"
       elsif @parked.get(:relaxed)
         "parked"

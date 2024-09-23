@@ -1,4 +1,3 @@
-require "./blocked_scheduler"
 require "./global_queue"
 require "./multi_threaded/scheduler"
 
@@ -16,8 +15,10 @@ module ExecutionContext
 
     getter name : String
     getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
+    getter event_loop : Crystal::EventLoop = Crystal::EventLoop.create
     protected getter global_queue : GlobalQueue
 
+    @event_loop_lock = Atomic(Bool).new(false)
     @parked = Atomic(Int32).new(0)
     @spinning = Atomic(Int32).new(0)
 
@@ -59,12 +60,6 @@ module ExecutionContext
       @threads = Array(Thread).new(@size.end)
 
       @rng = Random::PCG32.new
-
-      # OPTIMIZE: the linked list won't be needed anymore with a single
-      #           eventloop instance per execution context (an atomic will be
-      #           enough, as in the ST scheduler)
-      @blocked_lock = Crystal::SpinLock.new
-      @blocked_list = Crystal::PointerLinkedList(BlockedScheduler).new
 
       start_schedulers(hijack)
       start_initial_threads(hijack)
@@ -190,13 +185,12 @@ module ExecutionContext
       # another thread is spinning: nothing to do (it shall notice the enqueue)
       return if @spinning.get(:acquire) > 0
 
+      # try to interrupt a thread waiting on the event loop
+      #
       # OPTIMIZE: with one eventloop per execution context, we might prefer to
       #           wakeup a parked thread *before* interrupting the event loop.
-      unless @blocked_list.empty?
-        # try to interrupt a thread blocked on the event loop
-        if blocked = @blocked_lock.sync { @blocked_list.shift? }
-          blocked.value.unblock if blocked.value.trigger?
-        end
+      unless @event_loop_lock.get(:relaxed)
+        @event_loop.interrupt
         return
       end
 
@@ -237,16 +231,17 @@ module ExecutionContext
       end
     end
 
-    @[AlwaysInline]
-    protected def blocking_start(blocked : Pointer(BlockedScheduler)) : Nil
-      blocked.value.set
-      @blocked_lock.sync { @blocked_list.push(blocked) }
-    end
-
-    @[AlwaysInline]
-    protected def blocking_stop(blocked : Pointer(BlockedScheduler)) : Nil
-      return unless blocked.value.trigger?
-      @blocked_lock.sync { @blocked_list.delete(blocked) }
+    protected def lock_evloop? : Bool
+      if @event_loop_lock.swap(true, :acquire) == false
+        begin
+          yield @event_loop
+          true
+        ensure
+          @event_loop_lock.set(false, :release)
+        end
+      else
+        false
+      end
     end
 
     @[AlwaysInline]

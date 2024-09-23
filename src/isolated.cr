@@ -113,7 +113,6 @@ module ExecutionContext
           return
         end
 
-        # no need for try_run: the thread owns the event loop
         unless @event_loop.run(blocking: true)
           # evloop doesn't wait when empty (e.g. libevent)
           break

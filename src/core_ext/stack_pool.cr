@@ -3,6 +3,7 @@ class Fiber::StackPool
 
   # OPTIMIZE: collect stacks that haven't been used during the loop interval
   #           (instead of deallocating half of them arbitrarily).
+  # OPTIMIZE: collect N stacks with lock *then* collect them.
   def collect(count = lazy_size // 2) : Nil
     count.times do
       break unless stack = @lock.sync { @deque.shift? }
