@@ -131,7 +131,7 @@ module ExecutionContext
       # every once in a while: dequeue from global queue to avoid two fibers
       # constantly respawing each other to completely occupy the local queue
       if (@tick &+= 1) % 61 == 0
-        if fiber = global_queue.pop?
+        if fiber = @global_queue.pop?
           return fiber
         end
       end
@@ -191,20 +191,20 @@ module ExecutionContext
 
     private def find_next_runnable(&) : Nil
       # try queues & the event loop
-      yield @runnables.get?
-      yield @global_queue.grab?(@runnables, divisor: 1)
+      # yield @runnables.get?
+      # yield @global_queue.grab?(@runnables, divisor: 1)
 
-      if @event_loop.run(blocking: false)
-        yield @runnables.get?
-      end
+      # if @event_loop.run(blocking: false)
+      #   yield @runnables.get?
+      # end
 
       # nothing to do: start spinning
       spinning do
+        yield @global_queue.grab?(@runnables, divisor: 1)
+
         if @event_loop.run(blocking: false)
           yield @runnables.get?
         end
-
-        yield @global_queue.grab?(@runnables, divisor: 1)
       end
 
       # block on the event loop, waiting for pending event(s) to activate
