@@ -187,9 +187,12 @@ module ExecutionContext
 
       # try to interrupt a thread waiting on the event loop
       #
+      # FIXME: don't interrupt ourselves (i.e. current thread is running the
+      # eventloop...)
+      #
       # OPTIMIZE: with one eventloop per execution context, we might prefer to
       #           wakeup a parked thread *before* interrupting the event loop.
-      unless @event_loop_lock.get(:relaxed)
+      if @event_loop_lock.get(:relaxed)
         @event_loop.interrupt
         return
       end
