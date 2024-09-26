@@ -142,23 +142,15 @@ module ExecutionContext
       end
 
       private def find_next_runnable(&) : Nil
-        # try queues & the event loop
-        yield @runnables.get?
-        yield @global_queue.grab?(@runnables, divisor: @execution_context.size)
-
-        if @execution_context.lock_evloop? { @event_loop.run(blocking: false) }
-          yield @runnables.get?
-        end
-
         # nothing to do: start spinning
         spinning do
-          yield try_steal?
-
           if @execution_context.lock_evloop? { @event_loop.run(blocking: false) }
             yield @runnables.get?
           end
 
           yield @global_queue.grab?(@runnables, divisor: @execution_context.size)
+
+          yield try_steal?
         end
 
         # wait on the event loop for events and timers to activate

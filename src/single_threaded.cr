@@ -190,14 +190,6 @@ module ExecutionContext
     end
 
     private def find_next_runnable(&) : Nil
-      # try queues & the event loop
-      # yield @runnables.get?
-      # yield @global_queue.grab?(@runnables, divisor: 1)
-
-      # if @event_loop.run(blocking: false)
-      #   yield @runnables.get?
-      # end
-
       # nothing to do: start spinning
       spinning do
         yield @global_queue.grab?(@runnables, divisor: 1)
