@@ -73,8 +73,8 @@ module ExecutionContext
       size = @queue.size
 
       n = {
-        size,                   # can't grab more than available
-        size // divisor + 1,    # divide + try to take at least 1 fiber
+        size,                    # can't grab more than available
+        size // divisor + 1,     # divide + try to take at least 1 fiber
         runnables.capacity // 2, # refill half the destination queue
       }.min
 
