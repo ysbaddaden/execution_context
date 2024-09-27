@@ -161,7 +161,7 @@ module ExecutionContext
 
       n.times do |j|
         if scheduler = @schedulers[(i &+ j) % n]?
-          yield scheduler unless scheduler.idle?
+          yield scheduler
         end
       end
     end
