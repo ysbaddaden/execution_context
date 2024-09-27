@@ -164,7 +164,8 @@ module ExecutionContext
       loop do
         tail = @tail.get(:acquire) # sync with the producer
 
-        n = (tail &- head) // 2
+        n = tail &- head
+        n -= n // 2
         return 0_u32 if n == 0 # queue is empty
 
         if n > N // 2

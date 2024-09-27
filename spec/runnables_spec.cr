@@ -127,9 +127,9 @@ describe ExecutionContext::Runnables do
       fiber = r2.steal_from(r1)
 
       # stole half of the runnable fibers
-      fiber.should eq(fibers[2])
-      r2.get?.should eq(fibers[0])
-      r2.get?.should eq(fibers[1])
+      fiber.should be(fibers[2])
+      r2.get?.should be(fibers[0])
+      r2.get?.should be(fibers[1])
       r2.get?.should be_nil
 
       # left the other half
@@ -140,6 +140,40 @@ describe ExecutionContext::Runnables do
 
       # global queue is left untouched
       g.empty?.should be_true
+    end
+
+    it "steals the last fiber" do
+      g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
+      lone = Fiber.new(name: "lone") { }
+
+      # fill the source queue
+      r1 = ExecutionContext::Runnables(16).new(g)
+      r1.push(lone)
+
+      # steal from source queue
+      r2 = ExecutionContext::Runnables(16).new(g)
+      fiber = r2.steal_from(r1)
+
+      # stole the fiber & local queue is still empty
+      fiber.should be(lone)
+      r2.get?.should be_nil
+
+      # left nothing in original queue
+      r1.get?.should be_nil
+
+      # global queue is left untouched
+      g.empty?.should be_true
+    end
+
+    it "steals nothing" do
+      g = ExecutionContext::GlobalQueue.new(Thread::Mutex.new)
+      r1 = ExecutionContext::Runnables(16).new(g)
+      r2 = ExecutionContext::Runnables(16).new(g)
+
+      fiber = r2.steal_from(r1)
+      fiber.should be_nil
+      r2.get?.should be_nil
+      r1.get?.should be_nil
     end
   end
 
