@@ -168,7 +168,7 @@ module ExecutionContext
 
         @condition.wait(@mutex)
 
-        @parked.sub(1, :acquire_release)
+        # we don't decrement @parked because #wake_scheduler did
         Crystal.trace :sched, "wakeup"
       end
 
@@ -183,15 +183,14 @@ module ExecutionContext
     # parking when there is a parallel cross context enqueue!
     protected def wake_scheduler : Nil
       # another thread is spinning: nothing to do (it shall notice the enqueue)
-      return if @spinning.get(:acquire) > 0
+      if @spinning.get(:relaxed) > 0
+        return
+      end
 
       # try to interrupt a thread waiting on the event loop
       #
-      # FIXME: don't interrupt ourselves (i.e. current thread is running the
-      # eventloop...)
-      #
       # OPTIMIZE: with one eventloop per execution context, we might prefer to
-      #           wakeup a parked thread *before* interrupting the event loop.
+      #           wakeup a parked thread *before* interrupting the event loop?
       if @event_loop_lock.get(:relaxed)
         @event_loop.interrupt
         return
@@ -206,14 +205,20 @@ module ExecutionContext
       # the current thread
       if @parked.get(:acquire) > 0
         @mutex.synchronize do
-          # OPTIMIZE: relaxed atomics should be enough (we're inside a mutex
-          #           that shall already deal with memory order
+          # OPTIMIZE: relaxed atomic should be enough
           return if @parked.get(:acquire) == 0
-          return if @spinning.get(:acquire) > 0
+
+          # OPTIMIZE: don't unpark if there are enough spinning threads
+          return if @spinning.get(:relaxed) > 0
 
           # increase the number of spinning threads _now_ to avoid multiple
           # threads from trying to wakeup multiple threads at the same time
-          @spinning.add(1, :acquire_release)
+          #
+          # we must also decrement the number of parked threads because another
+          # thread could lock the mutex and increment @spinning again before the
+          # signaled thread is resumed (oops)
+          spinning = @spinning.add(1, :acquire_release)
+          parked = @parked.sub(1, :acquire_release)
 
           # wakeup a thread
           @condition.signal
@@ -222,8 +227,8 @@ module ExecutionContext
       end
 
       # shall we start another thread?
-      # no need for atomics, the values shall be rather stable ovber time and
-      # we check them again inside the mutex.
+      # no need for atomics, the values shall be rather stable over time and we
+      # check them again inside the mutex.
       return if @threads.size == @size.end
 
       @mutex.synchronize do
@@ -234,11 +239,10 @@ module ExecutionContext
       end
     end
 
-    protected def lock_evloop? : Bool
+    protected def lock_evloop?(& : -> Bool) : Bool
       if @event_loop_lock.swap(true, :acquire) == false
         begin
-          yield @event_loop
-          true
+          yield
         ensure
           @event_loop_lock.set(false, :release)
         end

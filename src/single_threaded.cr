@@ -97,6 +97,13 @@ module ExecutionContext
       end
     end
 
+    private def enqueue(queue : Queue*) : Fiber?
+      if fiber = queue.value.pop?
+        @runnables.bulk_push(queue) unless queue.value.empty?
+        fiber
+      end
+    end
+
     protected def reschedule : Nil
       Crystal.trace :sched, "reschedule"
       if fiber = quick_dequeue?
@@ -151,10 +158,10 @@ module ExecutionContext
       end
 
       # run the event loop to see if any event is activable
-      if @event_loop.run(blocking: false)
-        if fiber = @runnables.get?
-          return fiber
-        end
+      queue = Queue.new
+
+      if @event_loop.run(pointerof(queue), blocking: false)
+        return enqueue(pointerof(queue))
       end
     end
 
@@ -190,12 +197,14 @@ module ExecutionContext
     end
 
     private def find_next_runnable(&) : Nil
+      queue = Queue.new
+
       # nothing to do: start spinning
       spinning do
         yield @global_queue.grab?(@runnables, divisor: 1)
 
-        if @event_loop.run(blocking: false)
-          yield @runnables.get?
+        if @event_loop.run(pointerof(queue), blocking: false)
+          yield enqueue(pointerof(queue))
         end
       end
 
@@ -207,9 +216,13 @@ module ExecutionContext
         # block for a long time):
         yield @global_queue.grab?(@runnables, divisor: 1)
 
-        if @event_loop.run(blocking: true)
-          # the event loop enqueued a fiber or was interrupted: restart
+        if @event_loop.run(pointerof(queue), blocking: true)
+          yield enqueue(pointerof(queue))
+
+          # the event loop was interrupted: restart
           return
+        else
+          # the event loop doesn't wait when empty: go to park thread
         end
       end
 
@@ -288,7 +301,6 @@ module ExecutionContext
     # queue to try and wakeup the ST thread running in parallel that may be
     # running, spinning, waiting or parked.
     private def wake_scheduler : Nil
-      # return unless @idle
       return if @spinning.get(:acquire)
 
       if @waiting.get(:acquire)

@@ -46,6 +46,21 @@ module ExecutionContext
         @execution_context.wake_scheduler unless @execution_context.capacity == 1
       end
 
+      # Enqueue a list of fibers in a single operation and returns a fiber to
+      # resume immediately.
+      #
+      # This is called after running the event loop for example.
+      private def enqueue(queue : Queue*) : Fiber?
+        if fiber = queue.value.pop?
+          Crystal.trace :sched, "enqueue", size: queue.value.size, fiber: fiber
+          unless queue.value.empty?
+            @runnables.bulk_push(queue)
+            @execution_context.wake_scheduler
+          end
+          fiber
+        end
+      end
+
       protected def reschedule : Nil
         Crystal.trace :sched, "reschedule"
         if fiber = quick_dequeue?
@@ -100,6 +115,7 @@ module ExecutionContext
       private def try_steal? : Fiber?
         @execution_context.steal do |other|
           if other == self
+            # no need to steal from ourselves
             next
           end
 
@@ -142,19 +158,22 @@ module ExecutionContext
       end
 
       private def find_next_runnable(&) : Nil
+        queue = Queue.new
+
         # nothing to do: start spinning
         spinning do
-          if @execution_context.lock_evloop? { @event_loop.run(blocking: false) }
-            yield @runnables.get?
-          end
-
           yield @global_queue.grab?(@runnables, divisor: @execution_context.size)
+
+          if @execution_context.lock_evloop? { @event_loop.run(pointerof(queue), blocking: false) }
+            spin_stop
+            yield enqueue(pointerof(queue))
+          end
 
           yield try_steal?
         end
 
         # wait on the event loop for events and timers to activate
-        @execution_context.lock_evloop? do
+        result = @execution_context.lock_evloop? do
           @waiting = true
 
           # there is a time window between stop spinning and start waiting
@@ -163,22 +182,29 @@ module ExecutionContext
           # which may block for a long time:
           yield @global_queue.grab?(@runnables, divisor: @execution_context.size)
 
-          if @event_loop.run(blocking: true)
-            # the event loop enqueud a fiber or was interrupted: restart
-            return
-          end
+          # block on the event loop until an event is ready or the loop is
+          # interrupted
+          @event_loop.run(pointerof(queue), blocking: true)
         ensure
           @waiting = false
         end
 
+        if result
+          yield enqueue(pointerof(queue))
+
+          # the event loop was interrupted: restart
+          return
+        else
+          # evloop doesn't wait when empty (e.g. libevent)
+        end
+
         # no runnable fiber, no event in the event loop or another thread is
-        # already running the event loop: go into deep sleep until another
-        # scheduler or another context enqueues a fiber
+        # already running it: go into deep sleep until another scheduler or
+        # another context enqueues a fiber
         @execution_context.park_thread do
-          # by the time we acquired the lock, another thread may have
-          # enqueued fiber(s) and already tried to wakeup a thread (race).
-          # we don't check the scheduler's local queue nor its event loop
-          # (both are empty)
+          # by the time we acquired the lock, another thread may have enqueued
+          # fiber(s) and already tried to wakeup a thread (race). we don't check
+          # the scheduler's local queue nor its event loop (both are empty)
           yield @global_queue.unsafe_grab?(@runnables, divisor: @execution_context.size)
 
           # OPTIMIZE: may hold the lock for a while (increasing with threads)
@@ -197,9 +223,6 @@ module ExecutionContext
 
       # OPTIMIZE: skip spinning if spinning >= running/2
       private def spinning(&)
-        # we could avoid spinning with MT:1 but another context could try to
-        # enqueue... maybe keep a counter of execution contexts?
-        # return if @execution_context.size == 1
         spin_start
 
         4.times do |iter|

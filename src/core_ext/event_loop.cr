@@ -5,6 +5,16 @@ abstract class Crystal::EventLoop
   end
 end
 
+{% if Crystal.has_constant?(:Evented) %}
+  abstract class Crystal::Evented::EventLoop
+    @[AlwaysInline]
+    def run(runnables : ExecutionContext::Queue*, blocking : Bool) : Bool
+      system_run(blocking) { |fiber| runnables.value.push(fiber) }
+      true
+    end
+  end
+{% end %}
+
 {% if flag?(:unix) && flag?(:evloop_libevent) %}
   class Crystal::LibEvent::EventLoop
     # Create a new resume event for a fiber.

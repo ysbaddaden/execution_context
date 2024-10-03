@@ -103,21 +103,36 @@ module ExecutionContext
       # wait on the evloop
       @waiting.set(true, :release)
 
+      queue = Queue.new
+
       loop do
-        # check parallel enqueue first (on second iteration checks if evloop
-        # enqueued)
+        # check for parallel enqueue
         if @enqueued.get(:acquire)
           @waiting.set(false, :release)
-          @enqueued.set(false, :relaxed)
+          @enqueued.set(false, :release)
           Crystal.trace :sched, "resume"
           return
         end
 
-        unless @event_loop.run(blocking: true)
+        if @event_loop.run(pointerof(queue), blocking: true)
+          if fiber = queue.pop?
+            unless fiber == @main_fiber && queue.empty?
+              raise RuntimeError.new("ERROR: concurrency is disabled in isolated contexts")
+            end
+            @waiting.set(false, :release)
+            @enqueued.set(false, :release)
+            Crystal.trace :sched, "resume"
+            return
+          else
+            # the evloop got interrupted: restart
+            next
+          end
+        else
           # evloop doesn't wait when empty (e.g. libevent)
           break
         end
       end
+      @waiting.set(false, :relaxed)
 
       # empty evloop: park the thread
       @mutex.synchronize do
