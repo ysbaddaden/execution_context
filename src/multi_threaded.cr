@@ -23,7 +23,7 @@ module ExecutionContext
     @spinning = Atomic(Int32).new(0)
 
     # :nodoc:
-    def self.default(size : Int32) : self
+    protected def self.default(size : Int32) : self
       new("DEFAULT", 1..size, hijack: true)
     end
 

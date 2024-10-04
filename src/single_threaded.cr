@@ -24,7 +24,7 @@ module ExecutionContext
     @tick : Int32 = 0
 
     # :nodoc:
-    def self.default : self
+    protected def self.default : self
       new("DEFAULT", hijack: true)
     end
 
