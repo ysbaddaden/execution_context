@@ -132,7 +132,7 @@ module ExecutionContext
           break
         end
       end
-      @waiting.set(false, :relaxed)
+      @waiting.set(false, :release)
 
       # empty evloop: park the thread
       @mutex.synchronize do
