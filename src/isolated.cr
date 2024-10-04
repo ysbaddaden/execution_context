@@ -29,6 +29,7 @@ module ExecutionContext
       @mutex = Thread::Mutex.new
       @condition = Thread::ConditionVariable.new
       @enqueued = Atomic(Bool).new(false)
+      @waiting = Atomic(Bool).new(false)
       @parked = false
       @main_fiber = uninitialized Fiber
 
@@ -75,61 +76,78 @@ module ExecutionContext
     end
 
     def enqueue(fiber : Fiber) : Nil
-      if fiber == @main_fiber
-        if ExecutionContext.current == self
-          # local enqueue: the event loop is the one pushing
-          Crystal.trace :sched, "enqueue", fiber: fiber
-        else
-          # cross context communication (e.g. channel, mutex)
-          Crystal.trace :sched, "enqueue", fiber: fiber, to_context: self
+      Crystal.trace :sched, "enqueue", fiber: fiber, context: self
 
-          @mutex.synchronize do
-            @enqueued.set(true, :release)
-            @condition.signal if @parked
-          end
+      unless fiber == @main_fiber
+        raise RuntimeError.new("ERROR: concurrency is disabled in isolated contexts")
+      end
+
+      @mutex.synchronize do
+        # "enqueue" the fiber
+        @enqueued.set(true, :release)
+
+        # wake up the blocked thread
+        if @waiting.get(:acquire)
+          @event_loop.interrupt
+        elsif @parked
+          @condition.signal
+        else
+          # race: enqueued _before_ the thread entered #reschedule
         end
-      else
-        # concurrency is disabled
-        raise RuntimeError.new("Can't enqueue #{fiber} in #{self}")
       end
     end
 
     protected def reschedule : Nil
       Crystal.trace :sched, "reschedule"
 
-      if blocking { @event_loop.run(blocking: true) }
-        Crystal.trace :sched, "resume"
+      # wait on the evloop
+      @waiting.set(true, :release)
+
+      queue = Queue.new
+
+      loop do
+        # check for parallel enqueue
+        if @enqueued.get(:acquire)
+          @waiting.set(false, :release)
+          @enqueued.set(false, :release)
+          Crystal.trace :sched, "resume"
+          return
+        end
+
+        if @event_loop.run(pointerof(queue), blocking: true)
+          if fiber = queue.pop?
+            unless fiber == @main_fiber && queue.empty?
+              raise RuntimeError.new("ERROR: concurrency is disabled in isolated contexts")
+            end
+            @waiting.set(false, :release)
+            @enqueued.set(false, :release)
+            Crystal.trace :sched, "resume"
+            return
+          else
+            # the evloop got interrupted: restart
+            next
+          end
+        else
+          # evloop doesn't wait when empty (e.g. libevent)
+          break
+        end
+      end
+      @waiting.set(false, :release)
+
+      # empty evloop: park the thread
+      @mutex.synchronize do
+        unless @enqueued.get(:acquire)
+          @parked = true
+          Crystal.trace :sched, "parking"
+          @condition.wait(@mutex)
+          @parked = false
+        end
+
+        @enqueued.set(false, :relaxed)
         return
       end
 
-      # avoid the mutex if another thread already enqueued
-      return if @enqueued.swap(false, :acquire)
-
-      @mutex.synchronize do
-        # avoid a race condition with #enqueue
-        return if @enqueued.swap(false, :relaxed)
-
-        Crystal.trace :sched, "parking"
-        @parked = true
-
-        @condition.wait(@mutex)
-
-        @parked = false
-        @enqueued.set(false, :relaxed)
-      end
-
-      if @main_fiber.dead?
-        raise "BUG: can't resume dead fiber: #{@main_fiber}"
-      end
-
       Crystal.trace :sched, "resume"
-    end
-
-    private def blocking(&)
-      @blocked = true
-      yield
-    ensure
-      @blocked = false
     end
 
     protected def resume(fiber : Fiber) : Nil
@@ -166,8 +184,8 @@ module ExecutionContext
     def status : String
       if !@running
         "terminated"
-      elsif @blocked
-        "event_loop"
+      elsif @waiting
+        "event-loop"
       elsif @parked
         "parked"
       else

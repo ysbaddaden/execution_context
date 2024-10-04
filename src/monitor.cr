@@ -51,7 +51,7 @@ module ExecutionContext
         remaining = (now + @every - Time.monotonic).clamp(Time::Span.zero..)
       rescue exception
         Crystal::System.print_error_buffered(
-          "BUG: %s#run_loop crashed with %s (%s)",
+          "BUG: %s#every crashed with %s (%s)",
           self.class.name,
           exception.message,
           exception.class.name,

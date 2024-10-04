@@ -1,5 +1,4 @@
 require "crystal/pointer_linked_list"
-require "../blocked_scheduler"
 require "../runnables"
 
 module ExecutionContext
@@ -19,19 +18,16 @@ module ExecutionContext
 
       @runnables : Runnables(256)
 
-      # TODO: should eventually have one EL per EC
-      getter event_loop : Crystal::EventLoop
-
       @tick : Int32 = 0
       getter? idle : Bool
       getter? spinning : Bool = false
+      @waiting = false
       @parked = false
 
       protected def initialize(@execution_context, @name, @idle = true)
-        @runnables = Runnables(256).new(@execution_context.global_queue)
-        @event_loop = Crystal::EventLoop.create
-        @blocked = uninitialized BlockedScheduler
-        @blocked = BlockedScheduler.new(self)
+        @global_queue = @execution_context.global_queue
+        @event_loop = @execution_context.event_loop
+        @runnables = Runnables(256).new(@global_queue)
       end
 
       # :nodoc:
@@ -48,6 +44,21 @@ module ExecutionContext
         Crystal.trace :sched, "enqueue", fiber: fiber
         @runnables.push(fiber)
         @execution_context.wake_scheduler unless @execution_context.capacity == 1
+      end
+
+      # Enqueue a list of fibers in a single operation and returns a fiber to
+      # resume immediately.
+      #
+      # This is called after running the event loop for example.
+      private def enqueue(queue : Queue*) : Fiber?
+        if fiber = queue.value.pop?
+          Crystal.trace :sched, "enqueue", size: queue.value.size, fiber: fiber
+          unless queue.value.empty?
+            @runnables.bulk_push(queue)
+            @execution_context.wake_scheduler
+          end
+          fiber
+        end
       end
 
       protected def reschedule : Nil
@@ -90,7 +101,7 @@ module ExecutionContext
         # every once in a while: dequeue from global queue to avoid two fibers
         # constantly respawing each other to completely occupy the local queue
         if (@tick &+= 1) % 61 == 0
-          if fiber = @execution_context.global_queue.pop?
+          if fiber = @global_queue.pop?
             return fiber
           end
         end
@@ -104,6 +115,7 @@ module ExecutionContext
       private def try_steal? : Fiber?
         @execution_context.steal do |other|
           if other == self
+            # no need to steal from ourselves
             next
           end
 
@@ -146,47 +158,54 @@ module ExecutionContext
       end
 
       private def find_next_runnable(&) : Nil
-        # try queues & the event loop
-        yield @runnables.get?
-        yield @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
-
-        if @event_loop.run(blocking: false)
-          yield @runnables.get?
-        end
+        queue = Queue.new
 
         # nothing to do: start spinning
         spinning do
+          yield @global_queue.grab?(@runnables, divisor: @execution_context.size)
+
+          if @execution_context.lock_evloop? { @event_loop.run(pointerof(queue), blocking: false) }
+            spin_stop
+            yield enqueue(pointerof(queue))
+          end
+
           yield try_steal?
-
-          if @event_loop.run(blocking: false)
-            yield @runnables.get?
-          end
-
-          yield @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
         end
 
-        # block on the event loop, waiting for pending event(s) to activate
-        blocking do
-          # there is a time window between stop spinning and start blocking during
-          # which another context may have enqueued a fiber, check again before
-          # blocking on the event loop to avoid missing a runnable fiber
-          # (possible blocking it for a long time):
-          yield @execution_context.global_queue.grab?(@runnables, divisor: @execution_context.size)
+        # wait on the event loop for events and timers to activate
+        result = @execution_context.lock_evloop? do
+          @waiting = true
 
-          if @event_loop.run(blocking: true)
-            # the event loop enqueud a fiber or was interrupted: restart
-            return
-          end
+          # there is a time window between stop spinning and start waiting
+          # during which another context may have enqueued a fiber, check again
+          # before blocking on the event loop to avoid missing a runnable fiber,
+          # which may block for a long time:
+          yield @global_queue.grab?(@runnables, divisor: @execution_context.size)
+
+          # block on the event loop until an event is ready or the loop is
+          # interrupted
+          @event_loop.run(pointerof(queue), blocking: true)
+        ensure
+          @waiting = false
         end
 
-        # no runnable fiber, no event in the local event loop: go into deep
-        # sleep until another scheduler or another context enqueues a fiber
+        if result
+          yield enqueue(pointerof(queue))
+
+          # the event loop was interrupted: restart
+          return
+        else
+          # evloop doesn't wait when empty (e.g. libevent)
+        end
+
+        # no runnable fiber, no event in the event loop or another thread is
+        # already running it: go into deep sleep until another scheduler or
+        # another context enqueues a fiber
         @execution_context.park_thread do
-          # by the time we acquired the lock, another thread may have
-          # enqueued fiber(s) and already tried to wakeup a thread (race).
-          # we don't check the scheduler's local queue nor its event loop
-          # (both are empty)
-          yield @execution_context.global_queue.unsafe_grab?(@runnables, divisor: @execution_context.size)
+          # by the time we acquired the lock, another thread may have enqueued
+          # fiber(s) and already tried to wakeup a thread (race). we don't check
+          # the scheduler's local queue nor its event loop (both are empty)
+          yield @global_queue.unsafe_grab?(@runnables, divisor: @execution_context.size)
 
           # OPTIMIZE: may hold the lock for a while (increasing with threads)
           yield try_steal?
@@ -204,9 +223,6 @@ module ExecutionContext
 
       # OPTIMIZE: skip spinning if spinning >= running/2
       private def spinning(&)
-        # we could avoid spinning with MT:1 but another context could try to
-        # enqueue... maybe keep a counter of execution contexts?
-        # return if @execution_context.size == 1
         spin_start
 
         4.times do |iter|
@@ -229,8 +245,8 @@ module ExecutionContext
       private def spin_stop : Nil
         return unless @spinning
 
-        @spinning = false
         @execution_context.@spinning.sub(1, :acquire_release)
+        @spinning = false
       end
 
       @[AlwaysInline]
@@ -238,26 +254,6 @@ module ExecutionContext
         # OPTIMIZE: consider exponential backoff, but beware of edge cases, like
         # creating latency before we notice a cross context enqueue, for example)
         Thread.yield
-      end
-
-      @[AlwaysInline]
-      private def blocking(&)
-        # we could avoid the blocked list with MT:1 but another context could
-        # try to enqueue... maybe keep a counter of execution contexts?
-        # return yield if @execution_context.size == 1
-
-        @execution_context.blocking_start(pointerof(@blocked))
-        begin
-          yield
-        ensure
-          @execution_context.blocking_stop(pointerof(@blocked))
-        end
-      end
-
-      @[AlwaysInline]
-      protected def unblock : Nil
-        # Crystal.trace :sched, "unblock", scheduler: self
-        @event_loop.interrupt
       end
 
       @[AlwaysInline]
@@ -274,7 +270,7 @@ module ExecutionContext
       def status : String
         if @spinning
           "spinning"
-        elsif @blocked.set?
+        elsif @waiting.set?
           "event-loop"
         elsif @parked
           "parked"

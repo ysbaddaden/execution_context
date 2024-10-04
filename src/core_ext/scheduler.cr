@@ -13,8 +13,7 @@ class Crystal::Scheduler
 
   @[AlwaysInline]
   def self.event_loop
-    # ExecutionContext.current.event_loop
-    ExecutionContext::Scheduler.current.event_loop
+    ExecutionContext.current.event_loop
   end
 
   @[AlwaysInline]

@@ -8,9 +8,6 @@ module ExecutionContext
     abstract def thread : Thread
     abstract def execution_context : ExecutionContext
 
-    # TODO: move to ExecutionContext
-    abstract def event_loop : Crystal::EventLoop
-
     # Instantiates a Fiber and enqueues it into the scheduler's local queue.
     @[AlwaysInline]
     def spawn(*, name : String? = nil, &block : ->) : Fiber
@@ -85,10 +82,6 @@ module ExecutionContext
           fiber.execution_context.stack_pool.release(fiber.@stack)
         end
       {% end %}
-    end
-
-    def unblock : NoReturn
-      raise NotImplementedError.new("#{self.class.name}#unblock")
     end
 
     abstract def status : String

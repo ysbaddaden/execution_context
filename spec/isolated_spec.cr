@@ -138,6 +138,7 @@ describe ExecutionContext::Isolated do
       mutex = Mutex.new
       value = 0
       n, count = 4, 250_000
+      expected = n * count
 
       n.times do |i|
         ExecutionContext::Isolated.new("MTX-#{i}") do
@@ -149,7 +150,7 @@ describe ExecutionContext::Isolated do
 
       timeout = TestTimeout.new
       until timeout.done?
-        timeout.cancel if value == n * count
+        timeout.cancel if value == expected
         sleep 250.milliseconds
       end
 

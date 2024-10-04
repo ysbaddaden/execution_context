@@ -1,4 +1,3 @@
-require "./blocked_scheduler"
 require "./global_queue"
 require "./multi_threaded/scheduler"
 
@@ -16,13 +15,15 @@ module ExecutionContext
 
     getter name : String
     getter stack_pool : Fiber::StackPool = Fiber::StackPool.new
+    getter event_loop : Crystal::EventLoop = Crystal::EventLoop.create
     protected getter global_queue : GlobalQueue
 
+    @event_loop_lock = Atomic(Bool).new(false)
     @parked = Atomic(Int32).new(0)
     @spinning = Atomic(Int32).new(0)
 
     # :nodoc:
-    def self.default(size : Int32) : self
+    protected def self.default(size : Int32) : self
       new("DEFAULT", 1..size, hijack: true)
     end
 
@@ -59,12 +60,6 @@ module ExecutionContext
       @threads = Array(Thread).new(@size.end)
 
       @rng = Random::PCG32.new
-
-      # OPTIMIZE: the linked list won't be needed anymore with a single
-      #           eventloop instance per execution context (an atomic will be
-      #           enough, as in the ST scheduler)
-      @blocked_lock = Crystal::SpinLock.new
-      @blocked_list = Crystal::PointerLinkedList(BlockedScheduler).new
 
       start_schedulers(hijack)
       start_initial_threads(hijack)
@@ -148,11 +143,6 @@ module ExecutionContext
       end
     end
 
-    # TODO: there should be one event loop per execution context (not per scheduler)
-    # def event_loop : Crystal::EventLoop
-    #   raise "BUG: call #{self.class.name}#Scheduler#event_loop instead of #{self.class.name}#event_loop"
-    # end
-
     protected def steal(&) : Nil
       return if size == 1
 
@@ -178,7 +168,7 @@ module ExecutionContext
 
         @condition.wait(@mutex)
 
-        @parked.sub(1, :acquire_release)
+        # we don't decrement @parked because #wake_scheduler did
         Crystal.trace :sched, "wakeup"
       end
 
@@ -193,15 +183,16 @@ module ExecutionContext
     # parking when there is a parallel cross context enqueue!
     protected def wake_scheduler : Nil
       # another thread is spinning: nothing to do (it shall notice the enqueue)
-      return if @spinning.get(:acquire) > 0
+      if @spinning.get(:relaxed) > 0
+        return
+      end
 
+      # try to interrupt a thread waiting on the event loop
+      #
       # OPTIMIZE: with one eventloop per execution context, we might prefer to
-      #           wakeup a parked thread *before* interrupting the event loop.
-      unless @blocked_list.empty?
-        # try to interrupt a thread blocked on the event loop
-        if blocked = @blocked_lock.sync { @blocked_list.shift? }
-          blocked.value.unblock if blocked.value.trigger?
-        end
+      #           wakeup a parked thread *before* interrupting the event loop?
+      if @event_loop_lock.get(:relaxed)
+        @event_loop.interrupt
         return
       end
 
@@ -214,14 +205,20 @@ module ExecutionContext
       # the current thread
       if @parked.get(:acquire) > 0
         @mutex.synchronize do
-          # OPTIMIZE: relaxed atomics should be enough (we're inside a mutex
-          #           that shall already deal with memory order
+          # OPTIMIZE: relaxed atomic should be enough
           return if @parked.get(:acquire) == 0
-          return if @spinning.get(:acquire) > 0
+
+          # OPTIMIZE: don't unpark if there are enough spinning threads
+          return if @spinning.get(:relaxed) > 0
 
           # increase the number of spinning threads _now_ to avoid multiple
           # threads from trying to wakeup multiple threads at the same time
-          @spinning.add(1, :acquire_release)
+          #
+          # we must also decrement the number of parked threads because another
+          # thread could lock the mutex and increment @spinning again before the
+          # signaled thread is resumed (oops)
+          spinning = @spinning.add(1, :acquire_release)
+          parked = @parked.sub(1, :acquire_release)
 
           # wakeup a thread
           @condition.signal
@@ -230,8 +227,8 @@ module ExecutionContext
       end
 
       # shall we start another thread?
-      # no need for atomics, the values shall be rather stable ovber time and
-      # we check them again inside the mutex.
+      # no need for atomics, the values shall be rather stable over time and we
+      # check them again inside the mutex.
       return if @threads.size == @size.end
 
       @mutex.synchronize do
@@ -242,16 +239,16 @@ module ExecutionContext
       end
     end
 
-    @[AlwaysInline]
-    protected def blocking_start(blocked : Pointer(BlockedScheduler)) : Nil
-      blocked.value.set
-      @blocked_lock.sync { @blocked_list.push(blocked) }
-    end
-
-    @[AlwaysInline]
-    protected def blocking_stop(blocked : Pointer(BlockedScheduler)) : Nil
-      return unless blocked.value.trigger?
-      @blocked_lock.sync { @blocked_list.delete(blocked) }
+    protected def lock_evloop?(& : -> Bool) : Bool
+      if @event_loop_lock.swap(true, :acquire) == false
+        begin
+          yield
+        ensure
+          @event_loop_lock.set(false, :release)
+        end
+      else
+        false
+      end
     end
 
     @[AlwaysInline]
