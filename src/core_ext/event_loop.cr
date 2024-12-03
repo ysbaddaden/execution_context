@@ -91,7 +91,7 @@ end
 {% elsif Crystal::EventLoop.has_constant?(:IOCP) %}
   class Crystal::EventLoop::IOCP
     def run(runnables : Pointer(ExecutionContext::Queue), blocking : Bool) : Bool
-      run(blocking) { |fiber| runnables.value.push(fiber) }
+      run_impl(blocking) { |fiber| runnables.value.push(fiber) }
       true
     end
   end
