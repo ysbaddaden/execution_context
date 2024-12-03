@@ -89,5 +89,10 @@ end
     end
   end
 {% elsif Crystal::EventLoop.has_constant?(:IOCP) %}
-  # TODO: win32
+  class Crystal::EventLoop::IOCP
+    def run(runnables : Pointer(ExecutionContext::Queue), blocking : Bool) : Bool
+      run(blocking) { |fiber| runnables.value.push(fiber) }
+      true
+    end
+  end
 {% end %}
