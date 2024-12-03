@@ -18,19 +18,42 @@ on:
 
 jobs:
   format:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - uses: crystal-lang/install-crystal@v1
       - run: crystal tool format && git diff --exit-code
 
-  test:
-    runs-on: ubuntu-20.04
+  test_linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: nightly
-        id: crystal
-      - run: crystal spec -Dpreview_mt spec/*_spec.cr -v
-      - run: crystal spec -Dpreview_mt -Dmt spec/*_spec.cr -v
+      - run: crystal spec -Dpreview_mt -Devloop=epoll spec/*_spec.cr -v
+      - run: crystal spec -Dpreview_mt -Devloop=epoll -Dmt spec/*_spec.cr -v
+      - run: crystal spec -Dpreview_mt -Devloop=libevent spec/*_spec.cr -v
+      - run: crystal spec -Dpreview_mt -Devloop=libevent -Dmt spec/*_spec.cr -v
+
+  test_macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: nightly
+      - run: crystal spec -Dpreview_mt -Devloop=kqueue spec/*_spec.cr -v
+      - run: crystal spec -Dpreview_mt -Devloop=kqueue -Dmt spec/*_spec.cr -v
+      - run: crystal spec -Dpreview_mt -Devloop=libevent spec/*_spec.cr -v
+      - run: crystal spec -Dpreview_mt -Devloop=libevent -Dmt spec/*_spec.cr -v
+
+  #test_windows:
+  #  runs-on: windows-latest
+  #  steps:
+  #    - uses: actions/checkout@v2
+  #    - uses: crystal-lang/install-crystal@v1
+  #      with:
+  #        crystal: "branch:feature/evloop-iocp"
+  #    - run: crystal spec -Dpreview_mt spec/*_spec.cr -v
+  #    - run: crystal spec -Dpreview_mt -Dmt spec/*_spec.cr -v
