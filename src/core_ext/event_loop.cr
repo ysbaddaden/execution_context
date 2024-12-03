@@ -24,7 +24,7 @@ end
     def run(runnables : Pointer(ExecutionContext::Queue), blocking : Bool) : Bool
       Crystal.trace :evloop, "run", blocking: blocking ? 1 : 0
       @runnables = runnables
-       run(blocking)
+      run(blocking)
     ensure
       @runnables = nil
     end
