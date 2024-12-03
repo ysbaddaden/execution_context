@@ -270,7 +270,7 @@ module ExecutionContext
       def status : String
         if @spinning
           "spinning"
-        elsif @waiting.set?
+        elsif @waiting
           "event-loop"
         elsif @parked
           "parked"
