@@ -140,7 +140,10 @@ class Fiber
       #           copy the whole (huge) #run method...
       return if ExecutionContext::Scheduler.current.status == "event-loop"
     {% end %}
-    Fiber.maybe_yield
+
+    # FIXME: `Channel#receive_impl` and `Channel#send_impl` may both enqueue
+    # while holding a spinlock which leads to a deadlock in `select`.
+    # Fiber.maybe_yield
   end
 
   def resume : Nil
