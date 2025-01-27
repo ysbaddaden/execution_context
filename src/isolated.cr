@@ -170,6 +170,14 @@ module ExecutionContext
       ExecutionContext.execution_contexts.delete(self)
     end
 
+    # Wait for the isolated fiber to terminate. Returns normally if the fiber
+    # terminated normally; re-raises any uncatched exception raised by the
+    # isolated fiber otherwise.
+    @[AlwaysInline]
+    def join : Nil
+      @thread.join
+    end
+
     @[AlwaysInline]
     def inspect(io : IO) : Nil
       to_s(io)
