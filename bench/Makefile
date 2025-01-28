@@ -5,8 +5,9 @@ CRFLAGS=--release
 
 FIBER_QSORT_BINARIES=fiber_qsort fiber_qsort-mt fiber_qsort-ec fiber_qsort-ec-mt
 HTTP_SERVER_BINARIES=http_server http_server-mt http_server-ec http_server-ec-mt
+HTTP_DISPATCH_BINARIES=http_dispatch http_dispatch-mt http_dispatch-ec http_dispatch-ec-mt
 
-all: $(FIBER_QSORT_BINARIES) $(HTTP_SERVER_BINARIES)
+all: $(FIBER_QSORT_BINARIES) $(HTTP_SERVER_BINARIES) $(HTTP_DISPATCH_BINARIES)
 
 %: %.cr ../src/*.cr ../src/**/*.cr
 	$(CRYSTAL) build $(CRFLAGS) $< -o $@
@@ -21,6 +22,6 @@ all: $(FIBER_QSORT_BINARIES) $(HTTP_SERVER_BINARIES)
 	$(CRYSTAL) build -Dpreview_mt -Dec -Dmt $(CRFLAGS) $< -o $@
 
 clean: .phony
-	rm -f $(FIBER_QSORT_BINARIES) $(HTTP_SERVER_BINARIES)
+	rm -f $(FIBER_QSORT_BINARIES) $(HTTP_SERVER_BINARIES) $(HTTP_DISPATCH_BINARIES)
 
 .phony:
